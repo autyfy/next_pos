@@ -947,16 +947,6 @@ onMounted(async () => {
 	// Listen to stock policy changes
 	onStockPolicyChanged(({ changes, requiresReload }) => {
 		log.info('Event: Stock policy changed', changes)
-
-		if (changes.allow_negative_stock) {
-			const isNowAllowed = changes.allow_negative_stock.new
-
-			const message = isNowAllowed
-				? __('Negative stock sales are now allowed')
-				: __('Negative stock sales are now restricted')
-
-			showSuccess(message)
-		}
 	})
 
 	// Listen to sales operations changes
@@ -1368,11 +1358,18 @@ async function handleItemSelected(item, autoAdd = false) {
 		custom_item_category: item.custom_item_category
 	})
 
+	// Always enforce the POS profile warehouse — never allow a stale or wrong warehouse
+	// from item cache or ERPNext defaults to override the shift's warehouse.
+	const profileWarehouse = shiftStore.profileWarehouse
+	const itemWithWarehouse = profileWarehouse
+		? { ...item, warehouse: profileWarehouse }
+		: item
+
 	// Check if customer is "Internal Customer" - needs different price list
 	const isInternalCustomer = cartStore.customer?.customer_group?.toLowerCase() === 'internal customer'
 
 	// If Internal Customer, fetch fresh item details with correct price list (Standard Buying)
-	let itemToAdd = item
+	let itemToAdd = itemWithWarehouse
 	if (isInternalCustomer) {
 		try {
 			const freshDetails = await cartStore.getItemDetailsResource.submit({
@@ -1382,9 +1379,9 @@ async function handleItemSelected(item, autoAdd = false) {
 				qty: 1,
 				uom: item.uom || item.stock_uom,
 			})
-			// Merge fresh pricing with original item data
+			// Merge fresh pricing with original item data (preserve forced warehouse)
 			itemToAdd = {
-				...item,
+				...itemWithWarehouse,
 				rate: freshDetails.price_list_rate || freshDetails.rate || item.rate,
 				price_list_rate: freshDetails.price_list_rate || item.price_list_rate,
 			}
@@ -1890,6 +1887,7 @@ function handleBatchSerialSelected(batchSerial) {
 			...cartStore.pendingItem,
 			quantity: qty,
 			...batchSerial,
+			warehouse: shiftStore.profileWarehouse || cartStore.pendingItem.warehouse,
 		}
 		try {
 			cartStore.addItem(itemToAdd, qty, false, shiftStore.currentProfile)

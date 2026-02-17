@@ -275,6 +275,11 @@ def get_item_detail(item, doc=None, warehouse=None, price_list=None, company=Non
 
 	res = erpnext_get_item_details(args, doc)
 
+	# Always override warehouse with the POS profile warehouse so that barcode/serial
+	# scan results never end up with the alphabetically-first warehouse from ERPNext defaults.
+	if warehouse:
+		res["warehouse"] = warehouse
+
 	if item.get("is_stock_item") and warehouse:
 		if item.get("has_serial_no") and serial_no_data:
 			# For serial-tracked items, use count of active serial numbers

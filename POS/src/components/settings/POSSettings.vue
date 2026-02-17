@@ -139,35 +139,6 @@
 										/>
 									</div>
 
-									<!-- Stock Policy Settings -->
-									<div :class="stockPolicySubsectionClasses.container">
-										<div class="flex items-center gap-2 mb-4">
-											<svg :class="stockPolicySubsectionClasses.icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="icons.clipboard"/>
-											</svg>
-											<h4 class="text-sm font-semibold text-gray-900">{{ __('Stock Validation Policy') }}</h4>
-										</div>
-										<div class="flex flex-col gap-3">
-											<CheckboxField
-												v-model="settings.allow_negative_stock"
-												:label="__('Allow Negative Stock')"
-												:description="__('Enable selling items even when stock reaches zero or below. Integrates with ERPNext stock settings.')"
-											/>
-											<div class="mt-3 p-3 bg-blue-100 rounded-md">
-												<div class="flex items-start gap-2">
-													<svg class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="icons.info"/>
-													</svg>
-													<TranslatedHTML 
-														:tag="'p'"
-														class="text-xs text-blue-800 leading-relaxed" 
-														:inner="__('&lt;strong&gt;Note:&lt;strong&gt; When enabled, the system will allow sales even when stock quantity is zero or negative. This is useful for handling stock sync delays or backorders. All transactions are tracked in the stock ledger.')"
-													/>
-												</div>
-											</div>
-										</div>
-									</div>
-
 									<!-- Background Stock Sync Settings -->
 									<div :class="stockSyncSubsectionClasses.container">
 										<div class="flex items-center gap-2 mb-4">
@@ -486,8 +457,6 @@ const warehousesResource = createResource({
 	},
 })
 
-// Track original allow_negative_stock value for detecting changes
-const originalAllowNegativeStock = ref(null)
 
 const settingsResource = createResource({
 	url: "pos_next.pos_next.doctype.pos_settings.pos_settings.get_pos_settings",
@@ -501,7 +470,6 @@ const settingsResource = createResource({
 			Object.assign(settings.value, data)
 			settings.value.pos_profile = props.posProfile
 			// Store original value
-			originalAllowNegativeStock.value = data.allow_negative_stock
 			// Update event system snapshot
 			updateSettingsSnapshot(settings.value)
 		}
@@ -601,7 +569,6 @@ async function saveSettings() {
 	saving.value = true
 	const oldWarehouse = props.currentWarehouse
 	const warehouseChanged = selectedWarehouse.value !== oldWarehouse
-	const negativeStockChanged = originalAllowNegativeStock.value !== settings.value.allow_negative_stock
 	const taxInclusiveChanged = originalTaxInclusive.value !== null && originalTaxInclusive.value !== settings.value.tax_inclusive
 
 	// Capture old settings for change detection
@@ -624,7 +591,6 @@ async function saveSettings() {
 			Object.assign(settings.value, result)
 			settings.value.pos_profile = props.posProfile
 			// Update original values after successful save
-			originalAllowNegativeStock.value = result.allow_negative_stock
 			originalTaxInclusive.value = result.tax_inclusive
 		}
 
@@ -650,22 +616,6 @@ async function saveSettings() {
 		// Detect and emit settings changes through event system
 		// This will notify all listeners (POSSale, stock store, cart store, etc.)
 		detectSettingsChanges(settings.value, oldSettings)
-
-		// IMPORTANT: Page reload for critical stock policy change
-		// The allow_negative_stock setting affects deep stock validation logic
-		// throughout the app, including:
-		// - Stock validation in cart operations (posCart.js:59)
-		// - Stock enforcement checks (posSettings.js:268)
-		// - Item addition logic and error handling
-		// A page reload ensures all components get the fresh setting and
-		// prevents inconsistent state. Event listeners are still notified
-		// before reload for any cleanup needed.
-		if (negativeStockChanged) {
-			log.info("Stock policy changed, reloading page for consistency...")
-			window.location.reload()
-			return
-		}
-
 		// Show success toast for other changes
 		let successMessage = __("Settings saved successfully")
 		if (warehouseChanged && taxInclusiveChanged) {

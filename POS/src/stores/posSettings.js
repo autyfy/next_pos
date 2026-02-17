@@ -307,19 +307,20 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 	}
 
 	/**
-	 * Check if negative stock is allowed
-	 * @returns {boolean} - True if negative stock is allowed
+	 * Negative stock is always allowed — controlled per-item via item settings.
+	 * @returns {boolean}
 	 */
 	function isNegativeStockAllowed() {
-		return isEnabled.value && Boolean(settings.value.allow_negative_stock)
+		return true
 	}
 
 	/**
-	 * Check if stock validation should be enforced
-	 * @returns {boolean} - True if stock validation should prevent negative stock
+	 * Stock validation is never enforced at the POS level.
+	 * Stock control is handled per-item via item settings.
+	 * @returns {boolean}
 	 */
 	function shouldEnforceStockValidation() {
-		return isEnabled.value && !Boolean(settings.value.allow_negative_stock)
+		return false
 	}
 
 	/**

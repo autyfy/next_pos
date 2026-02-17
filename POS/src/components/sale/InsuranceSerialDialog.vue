@@ -34,7 +34,7 @@
 				<div>
 					<label class="block text-sm font-medium text-gray-700 mb-2">
 						{{ __('Insurance Serial Number') }}
-						<span class="text-gray-400 text-xs ms-1">({{ __('Optional') }})</span>
+						<span class="text-red-500 ms-1">*</span>
 					</label>
 					<div class="relative">
 						<input
@@ -42,14 +42,23 @@
 							v-model="insuranceSerialNo"
 							type="text"
 							:placeholder="__('Enter or scan insurance serial number...')"
-							class="w-full px-3 py-3 ps-10 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+							:class="[
+								'w-full px-3 py-3 ps-10 border rounded-lg text-sm focus:outline-none focus:ring-2',
+								hasError
+									? 'border-red-500 focus:ring-red-500 focus:border-red-500'
+									: 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
+							]"
 							@keyup.enter="handleConfirm"
+							@input="hasError = false"
 						/>
 						<svg class="absolute start-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
 						</svg>
 					</div>
-					<p class="mt-2 text-xs text-gray-500">
+					<p v-if="hasError" class="mt-2 text-xs text-red-500">
+						{{ __('Insurance Serial Number is required.') }}
+					</p>
+					<p v-else class="mt-2 text-xs text-gray-500">
 						{{ __('This serial number will be recorded with the item in the invoice.') }}
 					</p>
 				</div>
@@ -84,6 +93,7 @@ const emit = defineEmits(["update:modelValue", "insurance-serial-entered"])
 const show = ref(props.modelValue)
 const insuranceSerialNo = ref("")
 const serialInput = ref(null)
+const hasError = ref(false)
 
 watch(
 	() => props.modelValue,
@@ -92,6 +102,7 @@ watch(
 		if (val) {
 			// Reset and focus input when dialog opens
 			insuranceSerialNo.value = ""
+			hasError.value = false
 			nextTick(() => {
 				serialInput.value?.focus()
 			})
@@ -107,8 +118,14 @@ watch(show, (val) => {
 })
 
 function handleConfirm() {
+	if (!insuranceSerialNo.value.trim()) {
+		hasError.value = true
+		serialInput.value?.focus()
+		return
+	}
+	hasError.value = false
 	emit("insurance-serial-entered", {
-		insurance_sr_no: insuranceSerialNo.value.trim() || null,
+		insurance_sr_no: insuranceSerialNo.value.trim(),
 		quantity: props.quantity,
 	})
 	show.value = false

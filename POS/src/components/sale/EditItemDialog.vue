@@ -127,13 +127,13 @@
 							</select>
 						</div>
 
-						<!-- Warehouse Selector -->
+						<!-- Warehouse (read-only) -->
 						<div>
 							<label class="block text-sm font-medium text-gray-700 mb-2 text-start">{{ __('Warehouse') }}</label>
 							<select
 								v-model="localWarehouse"
-								@change="handleWarehouseChange"
-								class="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+								disabled
+								class="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm bg-gray-50 cursor-not-allowed text-gray-600"
 							>
 								<option
 									v-if="warehouses.length > 0"

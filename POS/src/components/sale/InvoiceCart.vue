@@ -811,6 +811,7 @@ const emit = defineEmits([
 	"remove-item",        // (itemCode, uom?) - Remove item from cart
 	"select-customer",    // (customer) - Select/change customer
 	"create-customer",    // (searchText) - Open create customer dialog
+	"edit-customer",      // (customer) - Open edit customer dialog with pre-filled data
 	"proceed-to-payment", // () - Navigate to payment screen
 	"clear-cart",         // () - Clear all items from cart
 	"save-draft",         // () - Save current cart as draft/hold order
@@ -1182,12 +1183,11 @@ function selectCustomer(cust) {
 }
 
 /**
- * Switch to edit/search mode for customer.
- * Saves current customer to allow restoring on blur.
+ * Open edit dialog for the currently selected customer.
+ * Emits 'edit-customer' with the current customer object.
  */
-async function editCustomer() {
-	previousCustomer.value = props.customer
-	await clearCustomer()
+function editCustomer() {
+	emit("edit-customer", props.customer)
 }
 
 /**

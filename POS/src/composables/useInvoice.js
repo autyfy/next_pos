@@ -817,6 +817,7 @@ export function useInvoice() {
 				invoiceData.advances = rawAdvances.map((adv) => ({
 					reference_type: adv.reference_type,
 					reference_name: adv.reference_name,
+					reference_row: adv.reference_row || null,
 					remarks: adv.remarks || '',
 					advance_amount: adv.advance_amount,
 					allocated_amount: adv.allocated_amount,

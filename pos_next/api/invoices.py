@@ -774,6 +774,22 @@ def submit_invoice(invoice=None, data=None):
         # paid_amount adjustment for finance lender payments is handled by
         # sales_invoice_hooks.validate and sales_invoice_hooks.before_save hooks
 
+        # Handle advances (Sales Invoice Advance child table) in submit_invoice
+        # Explicitly set advances so reference_row (needed for Journal Entry advances) is preserved
+        advances_data = invoice.get("advances")
+        if advances_data and isinstance(advances_data, list) and len(advances_data) > 0:
+            invoice_doc.set("advances", [])
+            for adv in advances_data:
+                invoice_doc.append("advances", {
+                    "reference_type": adv.get("reference_type"),
+                    "reference_name": adv.get("reference_name"),
+                    "reference_row": adv.get("reference_row") or "",
+                    "remarks": adv.get("remarks") or "",
+                    "advance_amount": flt(adv.get("advance_amount", 0)),
+                    "allocated_amount": flt(adv.get("allocated_amount", 0)),
+                    "ref_exchange_rate": flt(adv.get("ref_exchange_rate") or 1),
+                })
+
         # Auto-set batch numbers for returns
         _auto_set_return_batches(invoice_doc)
 

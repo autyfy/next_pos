@@ -1602,6 +1602,13 @@ async function handlePaymentCompleted(paymentData) {
 			cartStore.financeLenderPayments = []
 		}
 
+		// Store advances if provided
+		if (paymentData.advances && Array.isArray(paymentData.advances)) {
+			cartStore.invoiceAdvances = paymentData.advances.filter(adv => (adv.allocated_amount || 0) > 0)
+		} else {
+			cartStore.invoiceAdvances = []
+		}
+
 		// Store sales team data if provided
 		if (paymentData.sales_team && Array.isArray(paymentData.sales_team)) {
 			cartStore.salesTeam = paymentData.sales_team

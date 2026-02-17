@@ -24,6 +24,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		payments,
 		salesTeam,
 		financeLenderPayments,
+		invoiceAdvances,
 		additionalDiscount,
 		taxInclusive,
 		taxRules,
@@ -798,6 +799,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		suppressOfferReapply,
 		currentDraftId,
 		financeLenderPayments,
+		invoiceAdvances,
 		remarks, // Remarks/Narration for Sales Invoice
 		// Computed
 		itemCount,

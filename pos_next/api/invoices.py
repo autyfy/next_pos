@@ -776,7 +776,9 @@ def submit_invoice(invoice=None, data=None):
 
         # Handle advances (Sales Invoice Advance child table) in submit_invoice
         # Explicitly set advances so reference_row (needed for Journal Entry advances) is preserved
-        advances_data = invoice.get("advances")
+        # Check data first (passed explicitly from frontend), then fall back to invoice dict
+        advances_data = data.get("advances") or invoice.get("advances")
+        frappe.logger().info(f"[POS Advances] advances_data from data/invoice: {advances_data}")
         if advances_data and isinstance(advances_data, list) and len(advances_data) > 0:
             invoice_doc.set("advances", [])
             for adv in advances_data:
@@ -789,6 +791,7 @@ def submit_invoice(invoice=None, data=None):
                     "allocated_amount": flt(adv.get("allocated_amount", 0)),
                     "ref_exchange_rate": flt(adv.get("ref_exchange_rate") or 1),
                 })
+            frappe.logger().info(f"[POS Advances] Set {len(invoice_doc.advances)} advance rows on invoice_doc before save")
 
         # Auto-set batch numbers for returns
         _auto_set_return_batches(invoice_doc)
@@ -818,6 +821,30 @@ def submit_invoice(invoice=None, data=None):
         # This ensures add_remarks() in before_submit won't overwrite with "No Remarks"
         if remarks_from_invoice:
             invoice_doc.remarks = remarks_from_invoice
+
+        # Log advances state after save, before submit
+        frappe.logger().info(f"[POS Advances] After save, invoice_doc.advances count: {len(invoice_doc.get('advances', []))}")
+        for adv in invoice_doc.get("advances", []):
+            frappe.logger().info(f"[POS Advances] Row: ref_type={adv.reference_type}, ref_name={adv.reference_name}, ref_row={adv.reference_row}, allocated={adv.allocated_amount}")
+
+        # Re-set advances after save in case validate cleared them
+        if advances_data and isinstance(advances_data, list) and len(advances_data) > 0:
+            current_advances = invoice_doc.get("advances", [])
+            allocated_in_doc = sum(flt(a.allocated_amount) for a in current_advances)
+            allocated_in_data = sum(flt(a.get("allocated_amount", 0)) for a in advances_data)
+            if allocated_in_doc < allocated_in_data:
+                frappe.logger().warning(f"[POS Advances] Advances lost after save! Resetting. Doc had {allocated_in_doc}, data has {allocated_in_data}")
+                invoice_doc.set("advances", [])
+                for adv in advances_data:
+                    invoice_doc.append("advances", {
+                        "reference_type": adv.get("reference_type"),
+                        "reference_name": adv.get("reference_name"),
+                        "reference_row": adv.get("reference_row") or "",
+                        "remarks": adv.get("remarks") or "",
+                        "advance_amount": flt(adv.get("advance_amount", 0)),
+                        "allocated_amount": flt(adv.get("allocated_amount", 0)),
+                        "ref_exchange_rate": flt(adv.get("ref_exchange_rate") or 1),
+                    })
 
         # Submit invoice with error handling
         try:
@@ -860,6 +887,29 @@ def submit_invoice(invoice=None, data=None):
 
             # Re-raise the original submission error
             raise submit_error
+
+        # Reconcile advances against the submitted invoice.
+        # ERPNext's on_submit skips update_against_document_in_jv() for POS invoices (is_pos=1).
+        # We must call it explicitly so Payment Entry / Journal Entry advances get linked.
+        if advances_data and isinstance(advances_data, list) and len(advances_data) > 0:
+            try:
+                submitted_invoice = frappe.get_doc("Sales Invoice", invoice_doc.name)
+                frappe.logger().info(f"[POS Advances] After submit, advances on doc: {len(submitted_invoice.get('advances', []))}")
+                if submitted_invoice.get("advances"):
+                    submitted_invoice.flags.ignore_permissions = True
+                    frappe.flags.ignore_account_permission = True
+                    submitted_invoice.update_against_document_in_jv()
+                    frappe.logger().info(f"[POS Advances] update_against_document_in_jv completed")
+                else:
+                    frappe.logger().warning(f"[POS Advances] No advances on submitted invoice, skipping reconciliation")
+            except Exception as adv_error:
+                frappe.log_error(
+                    title="POS Advance Reconciliation Error",
+                    message=f"Invoice: {invoice_doc.name}, Error: {str(adv_error)}\n{frappe.get_traceback()}",
+                    reference_doctype="Sales Invoice",
+                    reference_name=invoice_doc.name,
+                )
+                frappe.logger().error(f"[POS Advances] Reconciliation failed: {str(adv_error)}")
 
         # Force-write remarks directly to DB after submit
         # This bypasses ORM hooks that may have cleared it during submit lifecycle

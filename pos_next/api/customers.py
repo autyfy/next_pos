@@ -38,16 +38,32 @@ def get_customers(search_term="", pos_profile=None, limit=20):
                 frappe.logger().debug(f"Filtering by customer_group: {profile_doc.customer_group}")
 
         # Only show customers whose customer group has custom_show_in_pos = 1
-        pos_groups = frappe.get_all(
-            "Customer Group",
-            filters={"custom_show_in_pos": 1},
-            pluck="name",
-        )
+        # If the custom field doesn't exist, return all customer groups
+        pos_groups = []
+        try:
+            pos_groups = frappe.get_all(
+                "Customer Group",
+                filters={"custom_show_in_pos": 1},
+                pluck="name",
+            )
+        except Exception as e:
+            # custom_show_in_pos field doesn't exist, fallback to all groups
+            # This can be frappe.db.ProgrammingError, MySQLdb.OperationalError, etc.
+            frappe.logger().debug(f"custom_show_in_pos field not found ({str(e)}), using all customer groups")
+            try:
+                pos_groups = frappe.get_all(
+                    "Customer Group",
+                    pluck="name",
+                )
+            except Exception as fallback_e:
+                frappe.logger().warning(f"Could not fetch customer groups: {str(fallback_e)}")
+                pos_groups = []
+        
         if pos_groups:
             filters["customer_group"] = ["in", pos_groups]
         else:
-            # No groups are marked for POS — return empty list
-            return []
+            # No groups found — return all customers without group filter
+            frappe.logger().debug("No customer groups found, returning all customers")
 
         # Return all customers (for client-side filtering)
         filters["disabled"] = 0

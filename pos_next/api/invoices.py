@@ -449,7 +449,7 @@ def update_invoice(data):
 
         # Determine correct tax template based on customer's GST state
         # This handles CGST+SGST (intra-state) vs IGST (inter-state)
-        # Uses comprehensive GST tax utilities that consider customer address
+        # Uses comprehensive GST tax utilities that consider customer address and branch
         tax_template = data.get("taxes_and_charges")
         shipping_address = data.get("shipping_address_name") or invoice_doc.get("shipping_address_name")
         
@@ -459,10 +459,12 @@ def update_invoice(data):
             # Auto-detect tax template using comprehensive GST utilities
             try:
                 from pos_next.api.gst_tax import get_gst_tax_template
+                # Pass branch if available for better non-GST customer handling
                 detected_template = get_gst_tax_template(
                     invoice_doc.company,
                     customer=invoice_doc.customer,
-                    shipping_address=shipping_address
+                    shipping_address=shipping_address,
+                    branch=invoice_doc.get("branch")
                 )
                 if detected_template:
                     invoice_doc.taxes_and_charges = detected_template
@@ -721,6 +723,31 @@ def submit_invoice(invoice=None, data=None):
                             item.branch = pos_profile_doc.branch
             except Exception:
                 pass  # Branch is optional, continue without it
+
+        # Handle place_of_supply based on customer type
+        # For non-GST customers: Use branch's custom_place_of_supply
+        # For GST customers: Use GST utilities to determine from GSTIN/address
+        if invoice_doc.customer:
+            try:
+                from pos_next.api.gst_tax import get_place_of_supply as get_pos_gst
+                
+                # Only set if not already set
+                if not invoice_doc.get("place_of_supply"):
+                    # Get place of supply using unified logic
+                    pos = get_pos_gst(
+                        invoice_doc.customer,
+                        invoice_doc.company,
+                        shipping_address=invoice_doc.get("shipping_address_name"),
+                        branch=invoice_doc.get("branch")
+                    )
+                    if pos:
+                        invoice_doc.place_of_supply = pos
+            except Exception as e:
+                # Log error but don't fail the invoice submission
+                frappe.log_error(
+                    f"Error setting place_of_supply: {str(e)}",
+                    "Place of Supply Error"
+                )
 
         # Set accounts for all payment methods before saving
         for payment in invoice_doc.payments:

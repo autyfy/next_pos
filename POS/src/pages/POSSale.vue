@@ -1434,8 +1434,8 @@ async function handleItemSelected(item, autoAdd = false) {
 		return
 	}
 
-	// Check for UOMs
-	if (item.item_uoms && item.item_uoms.length > 0) {
+	// Check for UOMs — only show selector if there are multiple UOMs to choose from
+	if (item.item_uoms && item.item_uoms.length > 1) {
 		cartStore.setPendingItem(item, 1, "uom")
 		uiStore.showItemSelectionDialog = true
 		return

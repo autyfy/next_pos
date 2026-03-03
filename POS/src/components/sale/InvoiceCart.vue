@@ -243,10 +243,10 @@
                                         </svg>
                                         <span class="text-[11px] font-bold text-green-700">{{ __('Offers') }}</span>
                                         <span
-                                                v-if="appliedOfferCount > 0 || offersStore.autoEligibleCount > 0"
+                                                v-if="appliedOfferCount > 0 || offersStore.allEligibleOffers.length > 0"
                                                 class="bg-green-600 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 flex-shrink-0 min-w-[16px] text-center"
                                         >
-                                                {{ appliedOfferCount > 0 ? appliedOfferCount : offersStore.autoEligibleCount }}
+                                                {{ appliedOfferCount > 0 ? appliedOfferCount : offersStore.allEligibleOffers.length }}
                                         </span>
                                 </button>
 

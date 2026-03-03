@@ -1495,15 +1495,102 @@ def apply_offers(invoice_data, selected_offers=None):
         if not items:
             return {"items": []}
 
+        # --- POS Offer records (tabPOS Offer) ---
+        # These are custom offer records managed in POS Next. They are applied
+        # directly here without going through the ERPNext pricing engine.
+        pos_offer_names = set()
+        pricing_rule_names = set()
+        if selected_offer_names:
+            existing_pos_offers = {
+                r.name for r in frappe.get_all(
+                    "POS Offer",
+                    filters={"name": ["in", list(selected_offer_names)]},
+                    fields=["name"],
+                )
+            }
+            pos_offer_names = selected_offer_names & existing_pos_offers
+            pricing_rule_names = selected_offer_names - pos_offer_names
+        else:
+            pricing_rule_names = selected_offer_names
+
+        prepared_items_for_pos_offers = [frappe._dict(row) for row in items]
+        applied_pos_offer_rules = set()
+
+        for offer_name in pos_offer_names:
+            pos_offer = frappe.get_cached_doc("POS Offer", offer_name)
+            if pos_offer.disable:
+                continue
+
+            apply_on = pos_offer.apply_on or "Transaction"
+            discount_type = pos_offer.discount_type or "Discount Percentage"
+            discount_pct = flt(pos_offer.discount_percentage)
+            discount_amt = flt(pos_offer.discount_amount)
+            fixed_rate = flt(pos_offer.rate)
+            offer_applied = False
+
+            for item_doc in prepared_items_for_pos_offers:
+                item_code = item_doc.get("item_code")
+                if not item_code:
+                    continue
+
+                # Check eligibility based on apply_on
+                if apply_on == "Item Code" and item_code != pos_offer.item:
+                    continue
+                elif apply_on == "Item Group":
+                    ig = item_doc.get("item_group") or frappe.get_cached_value("Item", item_code, "item_group")
+                    if ig != pos_offer.item_group:
+                        continue
+                elif apply_on == "Brand":
+                    brand = item_doc.get("brand") or frappe.get_cached_value("Item", item_code, "brand")
+                    if brand != pos_offer.brand:
+                        continue
+                # "Transaction" applies to all items
+
+                qty = flt(item_doc.get("qty") or item_doc.get("quantity") or 0)
+                plr = flt(item_doc.get("price_list_rate") or item_doc.get("rate") or 0)
+
+                if discount_type == "Discount Percentage" and discount_pct:
+                    item_doc.discount_percentage = discount_pct
+                    item_doc.discount_amount = plr * qty * discount_pct / 100
+                elif discount_type == "Discount Amount" and discount_amt:
+                    item_doc.discount_amount = discount_amt * qty
+                    item_doc.discount_percentage = (discount_amt / plr * 100) if plr else 0
+                elif discount_type == "Fixed Rate" and fixed_rate is not None:
+                    item_doc.rate = fixed_rate
+                    item_doc.discount_percentage = ((plr - fixed_rate) / plr * 100) if plr else 0
+                    item_doc.discount_amount = (plr - fixed_rate) * qty
+
+                item_doc.setdefault("pricing_rules", [])
+                if offer_name not in item_doc["pricing_rules"]:
+                    item_doc["pricing_rules"].append(offer_name)
+                offer_applied = True
+
+            if offer_applied:
+                applied_pos_offer_rules.add(offer_name)
+
+        # If only POS Offer names were selected (no Pricing Rules), return early
+        if selected_offer_names and not pricing_rule_names:
+            return {
+                "items": [dict(i) for i in prepared_items_for_pos_offers],
+                "free_items": [],
+                "applied_pricing_rules": sorted(applied_pos_offer_rules),
+            }
+
         if not invoice.get("pos_profile") or not erpnext_apply_pricing_rule:
             # Either no POS profile supplied or ERPNext promotional engine unavailable
-            return {"items": items}
+            return {
+                "items": [dict(i) for i in prepared_items_for_pos_offers],
+                "free_items": [],
+                "applied_pricing_rules": sorted(applied_pos_offer_rules),
+            }
 
         profile = frappe.get_doc("POS Profile", invoice.get("pos_profile"))
 
         pricing_items = []
         index_map = []
-        prepared_items = [frappe._dict(row) for row in items]
+        # Use prepared_items_for_pos_offers so any POS Offer discounts already
+        # applied above are preserved when the ERPNext engine runs too.
+        prepared_items = prepared_items_for_pos_offers
 
         for idx, item in enumerate(prepared_items):
             item_code = item.get("item_code")
@@ -1790,7 +1877,7 @@ def apply_offers(invoice_data, selected_offers=None):
         return {
             "items": [dict(item) for item in prepared_items],
             "free_items": [dict(item) for item in free_items],
-            "applied_pricing_rules": sorted(applied_rules),
+            "applied_pricing_rules": sorted(applied_rules | applied_pos_offer_rules),
         }
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Apply Offers Error")

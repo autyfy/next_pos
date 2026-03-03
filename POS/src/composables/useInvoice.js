@@ -232,6 +232,9 @@ export function useInvoice() {
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
 				custom_item_category: item.custom_item_category || null,
 				requires_insurance_sr_no: item.requires_insurance_sr_no || false,
+				// Stable unique row identifier — used by updateItemDetails to find the exact
+				// cart row when the same item_code appears multiple times (e.g. insurance items).
+				_rowId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
 			}
 			invoiceItems.value.push(newItem)
 			// Recalculate the newly added item to apply taxes

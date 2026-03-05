@@ -602,7 +602,7 @@ const gstData = ref({
 	mobile_no: "",
 	email_id: "",
 	customer_type: "Individual",
-	gst_category: "Unregistered",
+	gst_category: "Registered Regular",
 	custom_profession: "",
 	address_line1: "",
 	address_line2: "",
@@ -1249,10 +1249,7 @@ const createGstCustomer = async () => {
 			mobile_no: gstData.value.mobile_no || "",
 			email_id: gstData.value.email_id || "",
 			gstin: gstData.value.gstin,
-			// A customer with a GSTIN must be Registered — never save as Unregistered
-			gst_category: (gstData.value.gst_category && gstData.value.gst_category !== "Unregistered")
-				? gstData.value.gst_category
-				: "Registered Regular",
+			gst_category: gstData.value.gst_category || "Registered Regular",
 			custom_profession: gstData.value.custom_profession || "",
 		}
 
@@ -1389,7 +1386,7 @@ const resetForm = () => {
 		mobile_no: "",
 		email_id: "",
 		customer_type: "Individual",
-		gst_category: "Unregistered",
+		gst_category: "Registered Regular",
 		custom_profession: "",
 		address_line1: "",
 		address_line2: "",

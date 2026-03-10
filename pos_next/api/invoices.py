@@ -634,7 +634,14 @@ def update_invoice(data):
             except Exception:
                 pass
 
-        # Save as draft
+        # Save as draft.
+        # For brand-new invoices we intentionally use a temporary name so that
+        # the billing number sequence (tabSeries counter) is NOT consumed yet.
+        # The real name is assigned in submit_invoice() right before the actual
+        # submit call, making revert_series_if_last() reliable on failure.
+        if not data.get("name"):
+            invoice_doc.name = "POS-DRAFT-" + frappe.generate_hash(length=10)
+
         invoice_doc.flags.ignore_permissions = True
         frappe.flags.ignore_account_permission = True
         invoice_doc.docstatus = 0
@@ -844,6 +851,39 @@ def submit_invoice(invoice=None, data=None):
         # so we set it here, and again after save, to ensure it persists
         if remarks_from_invoice:
             invoice_doc.remarks = remarks_from_invoice
+
+        # If the draft was created with a temporary POS-DRAFT-xxx name (meaning
+        # the billing number has NOT been consumed yet), assign the real naming-
+        # series number right now — just before submit.  Doing it here means:
+        #   • A successful submit uses the next sequential number, no gap.
+        #   • A failed submit triggers the cleanup block below immediately
+        #     after the rename, so revert_series_if_last() almost always wins
+        #     (nothing else can have been assigned a higher number in this window).
+        #   • Drafts that are never submitted (abandoned carts) never hold a
+        #     real billing number at all.
+        if invoice_doc.name and invoice_doc.name.startswith("POS-DRAFT-"):
+            old_temp_name = invoice_doc.name
+            try:
+                from frappe.model.naming import set_new_name as _set_new_name
+                # force=True tells Frappe to ignore the existing doc.name and
+                # generate a fresh one from the naming series.
+                _set_new_name(invoice_doc, force=True)
+                real_name = invoice_doc.name
+                frappe.rename_doc(
+                    "Sales Invoice",
+                    old_temp_name,
+                    real_name,
+                    force=True,
+                    ignore_permissions=True,
+                )
+                invoice_doc = frappe.get_doc("Sales Invoice", real_name)
+                invoice_name = real_name
+            except Exception as rename_err:
+                frappe.log_error(
+                    title="POS Invoice Rename Error",
+                    message=f"Could not rename {old_temp_name} to real name: {str(rename_err)}\n{frappe.get_traceback()}",
+                )
+                raise
 
         # Save before submit
         invoice_doc.flags.ignore_permissions = True

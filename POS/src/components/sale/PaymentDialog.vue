@@ -1280,6 +1280,11 @@ const canComplete = computed(() => {
 		return true
 	}
 
+	// Disallow completing payment when entered amount exceeds the bill total
+	if (changeAmount.value > 0) {
+		return false
+	}
+
 	// Check if we have valid finance lender payments
 	const hasValidFinanceLenderPayments = financeLenderPayments.value.length > 0 &&
 		financeLenderPayments.value.some(row => row.amount > 0 && row.mode && row.finance_lender)

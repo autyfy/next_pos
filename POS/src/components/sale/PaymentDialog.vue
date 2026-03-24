@@ -920,9 +920,9 @@ const props = defineProps({
 		type: [String, Object],
 		default: null,
 	},
-	customerGroup: {
-		type: String,
-		default: null,
+	isCreditCustomer: {
+		type: Boolean,
+		default: false,
 	},
 	company: {
 		type: String,
@@ -1271,9 +1271,8 @@ const changeAmount = computed(() => {
 })
 
 // Check if customer is a Credit Customer (can complete without payments)
-const isCreditCustomer = computed(() => {
-	return props.customerGroup && props.customerGroup.toLowerCase() === 'credit customers'
-})
+// Determined by custom_stop_auto_creation flag on the customer's Customer Group
+const isCreditCustomer = computed(() => props.isCreditCustomer)
 
 const canComplete = computed(() => {
 	// Credit Customers can complete payment without any payments filled in

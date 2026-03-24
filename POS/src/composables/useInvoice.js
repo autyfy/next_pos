@@ -965,6 +965,7 @@ export function useInvoice() {
 					name: result.customer,
 					customer_name: result.customer_name || result.customer,
 					customer_group: result.customer_group,
+					is_credit_customer: result.is_credit_customer || 0,
 				}
 			}
 		} catch (error) {

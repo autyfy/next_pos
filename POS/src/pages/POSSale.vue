@@ -293,7 +293,7 @@
 			:allow-partial-payment="posSettingsStore.allowPartialPayment"
 			:allow-credit-sale="posSettingsStore.allowCreditSale"
 			:customer="cartStore.customer"
-			:customer-group="cartStore.customer?.customer_group"
+			:is-credit-customer="!!(cartStore.customer?.customer_group && posSettingsStore.creditCustomerGroups.includes(cartStore.customer.customer_group))"
 			:company="shiftStore.profileCompany"
 			:additional-discount="cartStore.additionalDiscount"
 			@payment-completed="handlePaymentCompleted"

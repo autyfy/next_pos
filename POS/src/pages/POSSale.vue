@@ -296,6 +296,7 @@
 			:is-credit-customer="!!(cartStore.customer?.customer_group && posSettingsStore.creditCustomerGroups.includes(cartStore.customer.customer_group))"
 			:company="shiftStore.profileCompany"
 			:additional-discount="cartStore.additionalDiscount"
+			:discount-ledger="cartStore.discountLedger"
 			@payment-completed="handlePaymentCompleted"
 			@update-additional-discount="handleAdditionalDiscountUpdate"
 		/>
@@ -1624,6 +1625,13 @@ async function handlePaymentCompleted(paymentData) {
 			cartStore.remarks = paymentData.remarks
 		} else {
 			cartStore.remarks = null
+		}
+
+		// Store discount ledger rows if provided
+		if (paymentData.discount_ledger && Array.isArray(paymentData.discount_ledger)) {
+			cartStore.discountLedger = paymentData.discount_ledger
+		} else {
+			cartStore.discountLedger = []
 		}
 
 		// Delete draft if it exists (since we're submitting/saving invoice)

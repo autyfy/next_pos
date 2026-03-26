@@ -17,6 +17,7 @@ export function useInvoice() {
 	const posProfile = ref(null)
 	const posOpeningShift = ref(null) // POS Opening Shift name
 	const additionalDiscount = ref(0)
+	const discountLedger = ref([]) // Discount Ledger rows for custom_discount_ledger child table
 	const couponCode = ref(null)
 	const taxRules = ref([]) // Tax rules from POS Profile
 	const taxInclusive = ref(false) // Tax inclusive setting from POS Settings
@@ -789,6 +790,14 @@ export function useInvoice() {
 					type: p.type,
 				})),
 				discount_amount: additionalDiscount.value || 0,
+				apply_discount_on: 'Net Total',
+				is_cash_or_non_trade_discount: 1,
+				additional_discount_account: 'Special Discount - IC',
+				custom_discount_ledger: toRaw(discountLedger.value).map(row => ({
+					discount_ledger: row.discount_ledger,
+					disc_: row.disc_ || 0,
+					discount: row.discount || 0,
+				})),
 				coupon_code: couponCode.value,
 				is_pos: 1,
 				update_stock: 1, // Critical: Ensures stock is updated
@@ -1001,6 +1010,7 @@ export function useInvoice() {
 		financeLenderPayments.value = []
 		invoiceAdvances.value = []
 		additionalDiscount.value = 0
+		discountLedger.value = []
 		couponCode.value = null
 		remarks.value = null
 		pendingDraftName.value = null
@@ -1031,6 +1041,7 @@ export function useInvoice() {
 		payments.value = []
 		financeLenderPayments.value = []
 		additionalDiscount.value = 0
+		discountLedger.value = []
 		couponCode.value = null
 		remarks.value = null
 
@@ -1170,6 +1181,7 @@ export function useInvoice() {
 		posProfile,
 		posOpeningShift,
 		additionalDiscount,
+		discountLedger,
 		couponCode,
 		taxRules,
 		taxInclusive,

@@ -1118,31 +1118,6 @@ const createNonGstCustomer = async () => {
 		const customerResult = await call("frappe.client.insert", { doc: customerDoc })
 		log.info("Non-GST Customer created", customerResult)
 
-		// Create Address with POS profile city/state — no user-entered location data
-		// City/state come from POS profile so they always match the billing location
-		if (nonGstData.value.city) {
-			try {
-				await call("frappe.client.insert", {
-					doc: {
-						doctype: "Address",
-						address_title: nonGstData.value.phone_number,
-						address_type: "Billing",
-						address_line1: nonGstData.value.address_line1 || "",
-						city: nonGstData.value.city,
-						state: nonGstData.value.state || "",
-						country: "India",
-						pincode: nonGstData.value.pincode || "",
-						is_primary_address: 1,
-						is_shipping_address: 1,
-						gst_category: "Unregistered",
-						links: [{ link_doctype: "Customer", link_name: customerResult.name }],
-					},
-				})
-			} catch (addrError) {
-				log.warn("Address creation failed, continuing", addrError)
-			}
-		}
-
 		showSuccess(__("Customer {0} created successfully", [customerResult.customer_name]))
 		emit("customer-created", customerResult)
 		show.value = false

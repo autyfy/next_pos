@@ -961,6 +961,16 @@ def submit_invoice(invoice=None, data=None):
             frappe.db.set_value("Sales Invoice", invoice_doc.name, "remarks", remarks_from_invoice, update_modified=False)
             frappe.db.commit()  # Ensure the change is committed
 
+        # Update unregistered customer's address city/state to current POS profile location
+        # This ensures the stored address always reflects the last billing location
+        try:
+            _update_customer_address_from_pos_profile(invoice_doc)
+        except Exception as addr_update_err:
+            frappe.log_error(
+                title="POS Customer Address Update Error",
+                message=f"Invoice: {invoice_doc.name}, Customer: {invoice_doc.customer}, Error: {str(addr_update_err)}\n{frappe.get_traceback()}"
+            )
+
         # Handle credit redemption after successful submission
         customer_credit_dict = data.get("customer_credit_dict") or invoice.get("customer_credit_dict")
         redeemed_customer_credit = data.get("redeemed_customer_credit") or invoice.get("redeemed_customer_credit")
@@ -995,6 +1005,78 @@ def submit_invoice(invoice=None, data=None):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Submit Invoice Error")
         raise
+
+
+def _update_customer_address_from_pos_profile(invoice_doc):
+    """
+    After a POS bill is submitted, update the unregistered customer's primary address
+    city/state to match the current POS profile's company address.
+    Creates the address if it doesn't exist yet (handles pre-existing customers).
+    """
+    if not invoice_doc.customer or not invoice_doc.pos_profile:
+        frappe.logger().debug("[POS Addr] Skipped: no customer or pos_profile")
+        return
+
+    # Only for unregistered customers (no GSTIN)
+    customer_gstin = frappe.db.get_value("Customer", invoice_doc.customer, "gstin")
+    if customer_gstin:
+        return
+
+    # Get POS profile's company address
+    company_address_name = frappe.db.get_value("POS Profile", invoice_doc.pos_profile, "company_address")
+    if not company_address_name:
+        frappe.logger().warning(f"[POS Addr] POS Profile {invoice_doc.pos_profile} has no company_address")
+        return
+
+    pos_addr = frappe.db.get_value(
+        "Address",
+        company_address_name,
+        ["city", "state", "pincode", "gst_state", "gst_state_number"],
+        as_dict=True,
+    )
+    if not pos_addr or not pos_addr.get("city"):
+        frappe.logger().warning(f"[POS Addr] Company address {company_address_name} has no city")
+        return
+
+    addr_fields = {
+        "city": pos_addr.city,
+        "state": pos_addr.state or "",
+        "pincode": pos_addr.pincode or "",
+        "gst_state": pos_addr.gst_state or "",
+        "gst_state_number": pos_addr.gst_state_number or "",
+    }
+
+    # Find any linked billing address (primary or not)
+    customer_address = frappe.db.sql("""
+        SELECT a.name FROM `tabAddress` a
+        INNER JOIN `tabDynamic Link` dl ON dl.parent = a.name
+        WHERE dl.link_doctype = 'Customer' AND dl.link_name = %s
+        AND dl.parenttype = 'Address'
+        ORDER BY a.is_primary_address DESC
+        LIMIT 1
+    """, (invoice_doc.customer,), as_dict=True)
+
+    if customer_address:
+        # Update existing address
+        frappe.db.set_value("Address", customer_address[0].name, addr_fields, update_modified=False)
+        frappe.logger().info(f"[POS Addr] Updated {customer_address[0].name} with {pos_addr.city} for {invoice_doc.customer}")
+    else:
+        # No address exists — create one (handles pre-existing customers)
+        customer_name = frappe.db.get_value("Customer", invoice_doc.customer, "customer_name")
+        addr_doc = frappe.get_doc({
+            "doctype": "Address",
+            "address_title": customer_name or invoice_doc.customer,
+            "address_type": "Billing",
+            "address_line1": "-",
+            "is_primary_address": 1,
+            "is_shipping_address": 1,
+            "gst_category": "Unregistered",
+            "links": [{"link_doctype": "Customer", "link_name": invoice_doc.customer}],
+            **addr_fields,
+        })
+        addr_doc.flags.ignore_permissions = True
+        addr_doc.insert()
+        frappe.logger().info(f"[POS Addr] Created address {addr_doc.name} for {invoice_doc.customer}")
 
 
 # ==========================================

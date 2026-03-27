@@ -82,7 +82,7 @@ def get_customers(search_term="", pos_profile=None, limit=20):
         result = frappe.get_all(
             "Customer",
             filters=filters,
-            fields=["name", "customer_name", "mobile_no", "email_id", "custom_party_name_for_print", "customer_group", "custom_profession", "gstin", "gst_category", "customer_type", "customer_details"],
+            fields=["name", "customer_name", "mobile_no", "email_id", "custom_party_name_for_print", "customer_group", "custom_profession", "gstin", "gst_category", "customer_type", "customer_details", "custom_address_for_print"],
             limit=customer_limit,
             order_by="customer_name asc",
         )
@@ -214,7 +214,7 @@ def update_customer(customer_name, updates):
         "Customer",
         customer_name,
         ["name", "customer_name", "mobile_no", "email_id", "custom_party_name_for_print",
-         "customer_group", "custom_profession", "gstin", "gst_category", "customer_type"],
+         "customer_group", "custom_profession", "gstin", "gst_category", "customer_type", "custom_address_for_print"],
         as_dict=True,
     )
     return result

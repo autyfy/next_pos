@@ -682,11 +682,22 @@ def submit_invoice(data, invoice=None):
                                      "redeemed_customer_credit", "coupon_code",
                                      "custom_finance_lender_payments", "sales_team")}
             data = {**invoice_parsed, **extra_fields}
+            # Old frontend already created a draft via update_invoice before calling here.
+            # Delete it and reclaim its name so the atomic insert() below reuses the same
+            # invoice number — no gap in the naming series.
+            _old_draft_name = invoice_parsed.get("name")
+            if _old_draft_name and frappe.db.exists("Sales Invoice", _old_draft_name):
+                if frappe.db.get_value("Sales Invoice", _old_draft_name, "docstatus") == 0:
+                    frappe.delete_doc(
+                        "Sales Invoice", _old_draft_name, force=True, ignore_permissions=True
+                    )
+                    data["_reclaim_name"] = _old_draft_name
 
         pos_profile = data.get("pos_profile")
         doctype = "Sales Invoice"
 
         # ── Extract submission-specific fields ─────────────────────────────
+        reclaim_name = data.pop("_reclaim_name", None)  # set by backward-compat block above
         advances_data = data.get("advances") or []
         sales_team_data = data.get("sales_team") or []
         finance_lender_data = data.get("custom_finance_lender_payments") or []
@@ -977,6 +988,10 @@ def submit_invoice(data, invoice=None):
         # ── INSERT — naming series allocated here ───────────────────────────
         # Nothing has been written to the DB up to this point.
         # If any pre-insert validation above threw, no series number was used.
+        # reclaim_name: backward-compat path deleted the old draft and wants to reuse
+        # its name so there is no gap in the invoice numbering series.
+        if reclaim_name:
+            invoice_doc.name = reclaim_name
         invoice_doc.flags.ignore_permissions = True
         frappe.flags.ignore_account_permission = True
         invoice_doc.insert()

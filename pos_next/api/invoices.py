@@ -655,162 +655,268 @@ def update_invoice(data):
 
 
 @frappe.whitelist()
-def submit_invoice(invoice=None, data=None):
-    """Submit the invoice (Step 2)."""
+def submit_invoice(data, invoice=None):
+    """Build and submit a POS Sales Invoice atomically in a single server call.
+
+    The naming series number is only allocated at insert(), so if any
+    validation fails before that point no gap is created in the series.
+    If insert() succeeds but submit() fails, the inserted draft is deleted
+    (a gap occurs, but this is unavoidable and rare).
+
+    ``update_invoice`` is no longer called — all invoice-building logic
+    runs here so there is no intermediate draft saved between the two steps.
+
+    Backward-compatible: old frontend sent invoice=<full doc>&data=<{change_amount,advances}>.
+    New frontend sends data=<full invoice JSON> only.
+    """
     try:
+        data = json.loads(data) if isinstance(data, str) else data
 
-        # Handle different calling conventions
-        if invoice is None:
-            if data:
-                # Check if data is a JSON string containing both params
-                data_parsed = json.loads(data) if isinstance(data, str) else data
+        # ── Backward compatibility: old two-param calling convention ──────────
+        # Old frontend: invoice=<full doc JSON>, data=<{change_amount, advances, ...}>
+        # New frontend: data=<full invoice JSON with all fields>
+        if invoice is not None:
+            invoice_parsed = json.loads(invoice) if isinstance(invoice, str) else invoice
+            extra_fields = {k: v for k, v in (data or {}).items()
+                            if k in ("change_amount", "advances", "customer_credit_dict",
+                                     "redeemed_customer_credit", "coupon_code",
+                                     "custom_finance_lender_payments", "sales_team")}
+            data = {**invoice_parsed, **extra_fields}
 
-                # frappe-ui might send all params nested in data
-                if isinstance(data_parsed, dict):
-                    if "invoice" in data_parsed:
-                        invoice = data_parsed.get("invoice")
-                        data = data_parsed.get("data", {})
-                    elif "name" in data_parsed or "doctype" in data_parsed:
-                        # Data itself might be the invoice
-                        invoice = data_parsed
-                        data = {}
-                    else:
-                        frappe.throw(
-                            _("Missing invoice parameter. Received data: {0}").format(
-                                json.dumps(data_parsed, default=str)
-                            )
-                        )
-                else:
-                    frappe.throw(_("Missing invoice parameter"))
-            else:
-                frappe.throw(_("Both invoice and data parameters are missing"))
-
-        # Parse JSON strings if needed
-        if isinstance(data, str):
-            data = json.loads(data) if data and data != "{}" else {}
-        if isinstance(invoice, str):
-            invoice = json.loads(invoice)
-
-        pos_profile = invoice.get("pos_profile")
+        pos_profile = data.get("pos_profile")
         doctype = "Sales Invoice"
 
-        invoice_name = invoice.get("name")
+        # ── Extract submission-specific fields ─────────────────────────────
+        advances_data = data.get("advances") or []
+        sales_team_data = data.get("sales_team") or []
+        finance_lender_data = data.get("custom_finance_lender_payments") or []
+        customer_credit_dict = data.get("customer_credit_dict")
+        redeemed_customer_credit = data.get("redeemed_customer_credit")
+        coupon_code = data.get("coupon_code")
+        tax_inclusive = cint(data.get("custom_is_this_tax_included_in_basic_rate", 0))
+        shipping_address = data.get("shipping_address_name")
+        discount_amount = flt(data.get("discount_amount") or 0)
+        custom_discount_ledger = data.get("custom_discount_ledger") or []
 
-        # Preserve remarks from invoice data before processing
-        # Handle empty strings - convert to None to avoid issues
-        remarks_from_invoice = invoice.get("remarks")
-        if remarks_from_invoice:
-            if isinstance(remarks_from_invoice, str):
-                remarks_from_invoice = remarks_from_invoice.strip() or None
-            # If it's not a string (shouldn't happen), set to None
-            elif not isinstance(remarks_from_invoice, str):
-                remarks_from_invoice = None
-        else:
-            remarks_from_invoice = None
-        
-        # Get or create invoice
-        if not invoice_name or not frappe.db.exists(doctype, invoice_name):
-            created = update_invoice(json.dumps(invoice))
-            invoice_name = created.get("name")
-            invoice_doc = frappe.get_doc(doctype, invoice_name)
-        else:
-            invoice_doc = frappe.get_doc(doctype, invoice_name)
-            invoice_doc.update(invoice)
-        
-        # Explicitly set remarks if provided (before submit, to prevent add_remarks from overwriting)
-        if remarks_from_invoice:
-            invoice_doc.remarks = remarks_from_invoice
-            
-        # Ensure tax-inclusive custom field is preserved
-        # This is critical - the validate hook reads this field to set included_in_print_rate
-        tax_inclusive = cint(data.get("custom_is_this_tax_included_in_basic_rate", 0)) or cint(invoice.get("custom_is_this_tax_included_in_basic_rate", 0))
-        if tax_inclusive:
-            invoice_doc.custom_is_this_tax_included_in_basic_rate = 1
-        else:
-            invoice_doc.custom_is_this_tax_included_in_basic_rate = 0
+        # Preserve remarks before any ORM processing
+        remarks = data.get("remarks")
+        if remarks:
+            remarks = remarks.strip() if isinstance(remarks, str) else None
+        remarks = remarks or None
 
-        # Ensure update_stock is set
-        invoice_doc.update_stock = 1
-        
-        # IMPORTANT: Don't call set_missing_values() here as it might reset taxes
-        # The validate hook will handle tax-inclusive mode and calculate taxes
+        # ── Build invoice doc in memory — no DB write yet ──────────────────
+        # Strip "name" so Frappe always creates a fresh document.
+        # The naming-series counter is NOT touched until insert().
+        invoice_data = {k: v for k, v in data.items() if k != "name"}
+        invoice_data["doctype"] = doctype
+        invoice_doc = frappe.get_doc(invoice_data)
 
-        # Copy accounting dimensions from POS Profile if not already set
-        if pos_profile and not invoice_doc.get("branch"):
+        # ── POS Profile: company, currency, branch ─────────────────────────
+        pos_profile_doc = None
+        if pos_profile:
             try:
                 pos_profile_doc = frappe.get_cached_doc("POS Profile", pos_profile)
-                if hasattr(pos_profile_doc, "branch") and pos_profile_doc.branch:
-                    invoice_doc.branch = pos_profile_doc.branch
-                    # Also set branch on all items for GL entries
-                    for item in invoice_doc.get("items", []):
-                        if not item.get("branch"):
-                            item.branch = pos_profile_doc.branch
             except Exception:
-                pass  # Branch is optional, continue without it
+                frappe.throw(_("Unable to load POS Profile {0}").format(pos_profile))
 
-        # Handle place_of_supply based on customer type
-        # For non-GST customers: Use branch's custom_place_of_supply
-        # For GST customers: Use GST utilities to determine from GSTIN/address
-        if invoice_doc.customer and invoice_doc.company:
+            invoice_doc.pos_profile = pos_profile
+            if pos_profile_doc.company and not invoice_doc.get("company"):
+                invoice_doc.company = pos_profile_doc.company
+            if pos_profile_doc.currency and not invoice_doc.get("currency"):
+                invoice_doc.currency = pos_profile_doc.currency
+            if hasattr(pos_profile_doc, "branch") and pos_profile_doc.branch:
+                invoice_doc.branch = pos_profile_doc.branch
+                for item in invoice_doc.get("items", []):
+                    item.branch = pos_profile_doc.branch
+
+        company = invoice_doc.get("company") or (
+            pos_profile_doc.company if pos_profile_doc else None
+        )
+
+        # ── Return-invoice validation ───────────────────────────────────────
+        if invoice_doc.is_return and invoice_doc.get("return_against"):
+            validation = validate_return_items(
+                invoice_doc.return_against,
+                [d.as_dict() for d in invoice_doc.items],
+                doctype=doctype,
+            )
+            if not validation.get("valid"):
+                frappe.throw(validation.get("message"))
+
+        # ── Customer creation ───────────────────────────────────────────────
+        customer_name = invoice_doc.get("customer")
+        if customer_name and not frappe.db.exists("Customer", customer_name):
             try:
-                from pos_next.api.gst_tax import get_place_of_supply as get_pos_gst
+                cust = frappe.get_doc({
+                    "doctype": "Customer",
+                    "customer_name": customer_name,
+                    "customer_group": "All Customer Groups",
+                    "territory": "All Territories",
+                    "customer_type": "Individual",
+                })
+                cust.flags.ignore_permissions = True
+                cust.insert()
+                invoice_doc.customer = cust.name
+                invoice_doc.customer_name = cust.customer_name
+            except Exception as e:
+                frappe.log_error(f"Failed to create customer {customer_name}: {e}")
 
-                # Always recalculate — draft may carry a stale value set by
-                # India Compliance's hook when customer_address wasn't yet on the doc.
-                pos = get_pos_gst(
-                    invoice_doc.customer,
+        # ── Pricing rules ───────────────────────────────────────────────────
+        invoice_doc.ignore_pricing_rule = 1
+        invoice_doc.flags.ignore_pricing_rule = True
+
+        # ── Discount / price_list_rate reverse-calculation ──────────────────
+        for item in invoice_doc.get("items", []):
+            item_rate = flt(item.rate or 0)
+            discount_pct = flt(item.discount_percentage or 0)
+
+            for attr in ("tax_amount", "cgst_amount", "sgst_amount", "igst_amount", "cess_amount"):
+                if hasattr(item, attr):
+                    delattr(item, attr)
+
+            if discount_pct > 0 and discount_pct < 100:
+                if item_rate > 0:
+                    item.price_list_rate = item_rate / (1 - discount_pct / 100)
+                elif not item.get("price_list_rate"):
+                    item.price_list_rate = item_rate
+            elif not item.get("price_list_rate"):
+                item.price_list_rate = item_rate
+
+            if flt(item.price_list_rate) < item_rate:
+                item.price_list_rate = item_rate
+
+            if not item.amount:
+                item.amount = flt(item_rate) * flt(item.qty or 1)
+
+        # ── Invoice flags ───────────────────────────────────────────────────
+        invoice_doc.is_pos = 1
+        invoice_doc.update_stock = 1
+
+        # ── Rounding ────────────────────────────────────────────────────────
+        disable_rounded = 1
+        if pos_profile:
+            try:
+                val = frappe.db.get_value(
+                    "POS Settings", {"pos_profile": pos_profile}, "disable_rounded_total"
+                )
+                if val is not None:
+                    disable_rounded = cint(val)
+            except Exception as e:
+                frappe.log_error(f"Error loading rounding setting: {str(e)}", "POS Invoice Creation")
+        invoice_doc.disable_rounded_total = disable_rounded
+
+        # ── Tax-inclusive flag ──────────────────────────────────────────────
+        invoice_doc.custom_is_this_tax_included_in_basic_rate = 1 if tax_inclusive else 0
+
+        # ── GST tax template ────────────────────────────────────────────────
+        tax_template = data.get("taxes_and_charges")
+        if tax_template:
+            invoice_doc.taxes_and_charges = tax_template
+        elif invoice_doc.customer and invoice_doc.company:
+            try:
+                from pos_next.api.gst_tax import get_gst_tax_template
+                detected = get_gst_tax_template(
                     invoice_doc.company,
-                    shipping_address=invoice_doc.get("shipping_address_name"),
+                    customer=invoice_doc.customer,
+                    shipping_address=shipping_address,
                     branch=invoice_doc.get("branch"),
                 )
-                if pos:
-                    invoice_doc.place_of_supply = pos
+                if detected:
+                    invoice_doc.taxes_and_charges = detected
             except Exception as e:
                 frappe.log_error(
-                    f"Error setting place_of_supply: {str(e)}",
-                    "Place of Supply Error"
+                    f"Error detecting GST tax template: {str(e)}",
+                    "GST Tax Template Detection Error",
                 )
 
-        # Set accounts for all payment methods before saving
+        taxes_and_charges_preserved = invoice_doc.taxes_and_charges
+
+        # ── set_missing_values ──────────────────────────────────────────────
+        invoice_doc.set_missing_values()
+
+        if not invoice_doc.taxes_and_charges and taxes_and_charges_preserved:
+            invoice_doc.taxes_and_charges = taxes_and_charges_preserved
+
+        if remarks:
+            invoice_doc.remarks = remarks
+
+        # ── Discount amount + ledger ────────────────────────────────────────
+        if discount_amount:
+            invoice_doc.discount_amount = discount_amount
+            invoice_doc.apply_discount_on = "Net Total"
+            if custom_discount_ledger:
+                invoice_doc.set("custom_discount_ledger", [])
+                for row in custom_discount_ledger:
+                    invoice_doc.append("custom_discount_ledger", {
+                        "discount_ledger": row.get("discount_ledger"),
+                        "actual_discount": flt(row.get("actual_discount", 0)),
+                        "discount": flt(row.get("discount", 0)),
+                    })
+
+        # ── Tax utilities ───────────────────────────────────────────────────
+        from pos_next.api.tax_utils import (
+            filter_rcm_taxes,
+            apply_tax_inclusive_settings,
+            ensure_taxes_loaded,
+            calculate_taxes_if_needed,
+        )
+
+        if not invoice_doc.get("taxes") and invoice_doc.taxes_and_charges:
+            ensure_taxes_loaded(invoice_doc)
+
+        filter_rcm_taxes(invoice_doc)
+
+        if tax_inclusive:
+            apply_tax_inclusive_settings(invoice_doc, tax_inclusive=tax_inclusive)
+            calculate_taxes_if_needed(invoice_doc, force=True)
+
+        try:
+            if invoice_doc.get("taxes"):
+                invoice_doc.run_method("calculate_taxes_and_totals")
+        except Exception as tax_calc_error:
+            frappe.log_error(
+                title="POS Invoice Tax Recalculation Error",
+                message=f"Invoice: NEW, Error: {str(tax_calc_error)}\n{frappe.get_traceback()}",
+            )
+
+        if discount_amount:
+            try:
+                invoice_doc.run_method("calculate_taxes_and_totals")
+            except Exception:
+                pass
+
+        # ── Payment accounts ────────────────────────────────────────────────
         for payment in invoice_doc.payments:
-            if payment.mode_of_payment:
-                account_info = get_payment_account(
-                    payment.mode_of_payment, invoice_doc.company
-                )
-                payment.account = account_info["account"]
-
-        # Handle sales team (multiple sales persons)
-        sales_team_data = invoice.get("sales_team") or data.get("sales_team")
-        if sales_team_data:
-            # Clear existing sales team entries
-            invoice_doc.sales_team = []
-
-            # Add new sales team entries
-            for member in sales_team_data:
-                invoice_doc.append("sales_team", {
-                    "sales_person": member.get("sales_person"),
-                    "allocated_percentage": member.get("allocated_percentage", 0),
-                })
-
-        # Handle POS Coupon if coupon_code is provided
-        coupon_code = invoice.get("coupon_code") or data.get("coupon_code")
-        if coupon_code:
-            # Increment usage counter for POS Coupon
-            if frappe.db.table_exists("POS Coupon"):
+            if payment.mode_of_payment and not payment.get("account"):
                 try:
-                    from pos_next.pos_next.doctype.pos_coupon.pos_coupon import increment_coupon_usage
-                    increment_coupon_usage(coupon_code)
-                except Exception as e:
-                    frappe.log_error(
-                        title="Failed to increment coupon usage",
-                        message=f"Coupon: {coupon_code}, Error: {str(e)}"
-                    )
+                    account_info = get_payment_account(payment.mode_of_payment, invoice_doc.company)
+                    payment.account = account_info["account"]
+                except Exception:
+                    pass
 
-        # Handle custom_finance_lender_payments in submit_invoice
-        # For existing invoices (loaded via frappe.get_doc), invoice_doc.update(invoice)
-        # may not properly handle child tables, so we explicitly set them here
-        finance_lender_data = invoice.get("custom_finance_lender_payments")
-        if finance_lender_data and isinstance(finance_lender_data, list) and len(finance_lender_data) > 0:
+        # For return invoices ensure payments are negative
+        if invoice_doc.is_return:
+            for payment in invoice_doc.payments:
+                payment.amount = -abs(payment.amount)
+                if payment.base_amount:
+                    payment.base_amount = -abs(payment.base_amount)
+            invoice_doc.paid_amount = flt(sum(p.amount for p in invoice_doc.payments))
+            invoice_doc.base_paid_amount = flt(
+                sum(p.base_amount or 0 for p in invoice_doc.payments)
+            )
+
+        # ── Coupon validation (before insert so invalid coupon aborts early) ─
+        if coupon_code and frappe.db.table_exists("POS Coupon"):
+            from pos_next.pos_next.doctype.pos_coupon.pos_coupon import check_coupon_code
+            coupon_result = check_coupon_code(
+                coupon_code, customer=invoice_doc.customer, company=invoice_doc.company
+            )
+            if not coupon_result.get("valid"):
+                frappe.throw(_(coupon_result.get("msg", "Invalid coupon code")))
+            invoice_doc.coupon_code = coupon_code
+
+        # ── Finance lender payments ─────────────────────────────────────────
+        if finance_lender_data:
             invoice_doc.set("custom_finance_lender_payments", [])
             for fp in finance_lender_data:
                 invoice_doc.append("custom_finance_lender_payments", {
@@ -820,17 +926,38 @@ def submit_invoice(invoice=None, data=None):
                     "reference_no": fp.get("reference_no", ""),
                 })
 
-        # paid_amount adjustment for finance lender payments is handled by
-        # sales_invoice_hooks.validate and sales_invoice_hooks.before_save hooks
+        # ── Place of supply ─────────────────────────────────────────────────
+        if invoice_doc.customer and invoice_doc.company:
+            try:
+                from pos_next.api.gst_tax import get_place_of_supply as _get_pos
+                _pos = _get_pos(
+                    invoice_doc.customer,
+                    invoice_doc.company,
+                    shipping_address=invoice_doc.get("shipping_address_name"),
+                    branch=invoice_doc.get("branch"),
+                )
+                if _pos:
+                    invoice_doc.place_of_supply = _pos
+            except Exception:
+                pass
 
-        # Handle advances (Sales Invoice Advance child table) in submit_invoice
-        # Explicitly set advances so reference_row (needed for Journal Entry advances) is preserved
-        # Check data first (passed explicitly from frontend), then fall back to invoice dict
-        advances_data = data.get("advances") or invoice.get("advances")
-        frappe.logger().info(f"[POS Advances] advances_data from data/invoice: {advances_data}")
-        if advances_data and isinstance(advances_data, list) and len(advances_data) > 0:
+        # ── Sales team ──────────────────────────────────────────────────────
+        if sales_team_data:
+            invoice_doc.set("sales_team", [])
+            for member in sales_team_data:
+                invoice_doc.append("sales_team", {
+                    "sales_person": member.get("sales_person"),
+                    "allocated_percentage": member.get("allocated_percentage", 0),
+                })
+
+        # ── Advances ────────────────────────────────────────────────────────
+        filtered_advances = [
+            adv for adv in advances_data if flt(adv.get("allocated_amount", 0)) > 0
+        ]
+        frappe.logger().info(f"[POS Advances] advances to set: {filtered_advances}")
+        if filtered_advances:
             invoice_doc.set("advances", [])
-            for adv in advances_data:
+            for adv in filtered_advances:
                 invoice_doc.append("advances", {
                     "reference_type": adv.get("reference_type"),
                     "reference_name": adv.get("reference_name"),
@@ -840,70 +967,33 @@ def submit_invoice(invoice=None, data=None):
                     "allocated_amount": flt(adv.get("allocated_amount", 0)),
                     "ref_exchange_rate": flt(adv.get("ref_exchange_rate") or 1),
                 })
-            frappe.logger().info(f"[POS Advances] Set {len(invoice_doc.advances)} advance rows on invoice_doc before save")
 
-        # Auto-set batch numbers for returns
+        # ── Auto-set return batches ─────────────────────────────────────────
         _auto_set_return_batches(invoice_doc)
 
-        # Ensure discount fields are applied before save (they may have been loaded from draft,
-        # but explicit setting ensures India Compliance hooks don't reset them)
-        discount_amount_submit = flt(invoice.get("discount_amount") or 0)
-        if discount_amount_submit:
-            invoice_doc.discount_amount = discount_amount_submit
-            invoice_doc.apply_discount_on = "Net Total"
-            # Handle custom_discount_ledger child table
-            custom_discount_ledger = invoice.get("custom_discount_ledger")
-            if custom_discount_ledger and isinstance(custom_discount_ledger, list):
-                invoice_doc.set("custom_discount_ledger", [])
-                for row in custom_discount_ledger:
-                    invoice_doc.append("custom_discount_ledger", {
-                        "discount_ledger": row.get("discount_ledger"),
-                        "actual_discount": flt(row.get("actual_discount", 0)),
-                        "discount": flt(row.get("discount", 0)),
-                    })
-            try:
-                invoice_doc.run_method("calculate_taxes_and_totals")
-            except Exception:
-                pass
+        if remarks:
+            invoice_doc.remarks = remarks
 
-        # Set remarks before save and submit
-        # add_remarks() in ERPNext's before_submit only sets "No Remarks" if `not self.remarks`
-        # so we set it here, and again after save, to ensure it persists
-        if remarks_from_invoice:
-            invoice_doc.remarks = remarks_from_invoice
-
-        # Save before submit
+        # ── INSERT — naming series allocated here ───────────────────────────
+        # Nothing has been written to the DB up to this point.
+        # If any pre-insert validation above threw, no series number was used.
         invoice_doc.flags.ignore_permissions = True
         frappe.flags.ignore_account_permission = True
+        invoice_doc.insert()
 
-        try:
-            invoice_doc.save()
-        except Exception as save_error:
-            frappe.log_error(
-                title="POS Invoice Save Error",
-                message=f"Invoice: {invoice_doc.name if hasattr(invoice_doc, 'name') else 'NEW'}, Remarks: {remarks_from_invoice}, Error: {str(save_error)}\n{frappe.get_traceback()}"
-            )
-            raise
+        frappe.logger().info(f"[POS Submit] Inserted: {invoice_doc.name}")
 
-        # Re-set remarks after save (in case hooks/lifecycle cleared it)
-        # This ensures add_remarks() in before_submit won't overwrite with "No Remarks"
-        if remarks_from_invoice:
-            invoice_doc.remarks = remarks_from_invoice
-
-        # Log advances state after save, before submit
-        frappe.logger().info(f"[POS Advances] After save, invoice_doc.advances count: {len(invoice_doc.get('advances', []))}")
-        for adv in invoice_doc.get("advances", []):
-            frappe.logger().info(f"[POS Advances] Row: ref_type={adv.reference_type}, ref_name={adv.reference_name}, ref_row={adv.reference_row}, allocated={adv.allocated_amount}")
-
-        # Re-set advances after save in case validate cleared them
-        if advances_data and isinstance(advances_data, list) and len(advances_data) > 0:
-            current_advances = invoice_doc.get("advances", [])
-            allocated_in_doc = sum(flt(a.allocated_amount) for a in current_advances)
-            allocated_in_data = sum(flt(a.get("allocated_amount", 0)) for a in advances_data)
+        # Re-check advances after insert (validate hooks may have cleared them)
+        if filtered_advances:
+            allocated_in_doc = sum(flt(a.allocated_amount) for a in invoice_doc.get("advances", []))
+            allocated_in_data = sum(flt(a.get("allocated_amount", 0)) for a in filtered_advances)
             if allocated_in_doc < allocated_in_data:
-                frappe.logger().warning(f"[POS Advances] Advances lost after save! Resetting. Doc had {allocated_in_doc}, data has {allocated_in_data}")
+                frappe.logger().warning(
+                    f"[POS Advances] Advances lost after insert! Resetting. "
+                    f"Doc had {allocated_in_doc}, data has {allocated_in_data}"
+                )
                 invoice_doc.set("advances", [])
-                for adv in advances_data:
+                for adv in filtered_advances:
                     invoice_doc.append("advances", {
                         "reference_type": adv.get("reference_type"),
                         "reference_name": adv.get("reference_name"),
@@ -914,62 +1004,61 @@ def submit_invoice(invoice=None, data=None):
                         "ref_exchange_rate": flt(adv.get("ref_exchange_rate") or 1),
                     })
 
-        # Submit invoice with error handling
+        if remarks:
+            invoice_doc.remarks = remarks
+
+        # ── SUBMIT ──────────────────────────────────────────────────────────
+        # If this fails we delete the inserted draft.
+        # A gap in the naming series is created here — this is unavoidable
+        # but rare (only on genuine validation/stock errors at submit time).
         try:
             invoice_doc.submit()
         except Exception as submit_error:
-            # Log the error for debugging with full details
-            error_msg = str(submit_error)
-            error_traceback = frappe.get_traceback()
-            
             frappe.log_error(
                 title="POS Invoice Submit Error",
-                message=f"Invoice: {invoice_doc.name}, Remarks: {remarks_from_invoice}, Remarks in doc: {getattr(invoice_doc, 'remarks', 'NOT SET')}, Error: {error_msg}\n\nTraceback:\n{error_traceback}",
+                message=f"Invoice: {invoice_doc.name}, Error: {str(submit_error)}\n{frappe.get_traceback()}",
                 reference_doctype="Sales Invoice",
-                reference_name=invoice_doc.name
+                reference_name=invoice_doc.name,
             )
-            
-            # Print to console as well for immediate visibility
-            frappe.errprint(f"POS Invoice Submit Failed: {error_msg}")
-            # If submission fails, cleanup the invoice to prevent stock reservation issues
+            frappe.errprint(f"POS Invoice Submit Failed: {str(submit_error)}")
             try:
-                # Reload to get current state
                 current_doc = frappe.get_doc("Sales Invoice", invoice_doc.name)
-
-                # If already submitted, must cancel before deleting
                 if current_doc.docstatus == 1:
                     current_doc.flags.ignore_permissions = True
                     current_doc.cancel()
-
-                # Now delete the cancelled/draft invoice
                 frappe.delete_doc(
-                    "Sales Invoice",
-                    invoice_doc.name,
-                    force=True,
-                    ignore_permissions=True,
+                    "Sales Invoice", invoice_doc.name, force=True, ignore_permissions=True
                 )
                 frappe.db.commit()
             except Exception:
-                # Silent fail on cleanup - don't hide original error
                 pass
-
-            # Re-raise the original submission error
             raise submit_error
 
-        # Reconcile advances against the submitted invoice.
-        # ERPNext's on_submit skips update_against_document_in_jv() for POS invoices (is_pos=1).
-        # We must call it explicitly so Payment Entry / Journal Entry advances get linked.
-        if advances_data and isinstance(advances_data, list) and len(advances_data) > 0:
+        # ── Post-submit: coupon usage increment ────────────────────────────
+        if coupon_code and frappe.db.table_exists("POS Coupon"):
             try:
-                submitted_invoice = frappe.get_doc("Sales Invoice", invoice_doc.name)
-                frappe.logger().info(f"[POS Advances] After submit, advances on doc: {len(submitted_invoice.get('advances', []))}")
-                if submitted_invoice.get("advances"):
-                    submitted_invoice.flags.ignore_permissions = True
+                from pos_next.pos_next.doctype.pos_coupon.pos_coupon import increment_coupon_usage
+                increment_coupon_usage(coupon_code)
+            except Exception as e:
+                frappe.log_error(
+                    title="Failed to increment coupon usage",
+                    message=f"Coupon: {coupon_code}, Error: {str(e)}",
+                )
+
+        # ── Post-submit: advance reconciliation ────────────────────────────
+        if filtered_advances:
+            try:
+                submitted = frappe.get_doc("Sales Invoice", invoice_doc.name)
+                frappe.logger().info(
+                    f"[POS Advances] After submit, advances on doc: {len(submitted.get('advances', []))}"
+                )
+                if submitted.get("advances"):
+                    submitted.flags.ignore_permissions = True
                     frappe.flags.ignore_account_permission = True
-                    submitted_invoice.update_against_document_in_jv()
-                    frappe.logger().info(f"[POS Advances] update_against_document_in_jv completed")
+                    submitted.update_against_document_in_jv()
+                    frappe.logger().info("[POS Advances] update_against_document_in_jv completed")
                 else:
-                    frappe.logger().warning(f"[POS Advances] No advances on submitted invoice, skipping reconciliation")
+                    frappe.logger().warning("[POS Advances] No advances on submitted invoice, skipping reconciliation")
             except Exception as adv_error:
                 frappe.log_error(
                     title="POS Advance Reconciliation Error",
@@ -977,18 +1066,15 @@ def submit_invoice(invoice=None, data=None):
                     reference_doctype="Sales Invoice",
                     reference_name=invoice_doc.name,
                 )
-                frappe.logger().error(f"[POS Advances] Reconciliation failed: {str(adv_error)}")
 
-        # Force-write remarks directly to DB after submit
-        # This bypasses ORM hooks that may have cleared it during submit lifecycle
-        if remarks_from_invoice:
-            frappe.db.set_value("Sales Invoice", invoice_doc.name, "remarks", remarks_from_invoice, update_modified=False)
-            frappe.db.commit()  # Ensure the change is committed
+        # ── Post-submit: force-write remarks ───────────────────────────────
+        if remarks:
+            frappe.db.set_value(
+                "Sales Invoice", invoice_doc.name, "remarks", remarks, update_modified=False
+            )
+            frappe.db.commit()
 
-        # Handle credit redemption after successful submission
-        customer_credit_dict = data.get("customer_credit_dict") or invoice.get("customer_credit_dict")
-        redeemed_customer_credit = data.get("redeemed_customer_credit") or invoice.get("redeemed_customer_credit")
-
+        # ── Post-submit: credit redemption ──────────────────────────────────
         if redeemed_customer_credit and customer_credit_dict:
             try:
                 from pos_next.api.credit_sales import redeem_customer_credit
@@ -996,16 +1082,17 @@ def submit_invoice(invoice=None, data=None):
             except Exception as credit_error:
                 frappe.log_error(
                     title="Credit Redemption Error",
-                    message=f"Invoice: {invoice_doc.name}, Error: {str(credit_error)}\n{frappe.get_traceback()}"
+                    message=f"Invoice: {invoice_doc.name}, Error: {str(credit_error)}\n{frappe.get_traceback()}",
                 )
-                # Don't fail the entire transaction, just log the error
                 frappe.msgprint(
-                    _("Invoice submitted successfully but credit redemption failed. Please contact administrator."),
+                    _(
+                        "Invoice submitted successfully but credit redemption failed. "
+                        "Please contact administrator."
+                    ),
                     alert=True,
-                    indicator="orange"
+                    indicator="orange",
                 )
 
-        # Return complete invoice details
         return {
             "name": invoice_doc.name,
             "status": invoice_doc.docstatus,

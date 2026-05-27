@@ -46,6 +46,28 @@ import "./index.css"
 const log = logger.create("Main")
 
 // =============================================================================
+// Input Focus Workaround
+// =============================================================================
+// Some code (our own old bundle served by stale SW, or framework libraries) calls
+// preventDefault() on pointerdown, which suppresses the browser-generated mousedown
+// and automatic focus on inputs. pointerup is not affected by that preventDefault(),
+// so we restore focus there if the element didn't already receive it.
+document.addEventListener(
+	"pointerup",
+	(e) => {
+		const el = e.target
+		if (
+			el &&
+			(el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable) &&
+			document.activeElement !== el
+		) {
+			el.focus()
+		}
+	},
+	{ capture: true, passive: true },
+)
+
+// =============================================================================
 // PWA Service Worker Registration
 // =============================================================================
 

@@ -93,7 +93,7 @@ export const useSerialNumberStore = defineStore('serialNumber', () => {
 					warehouse: currentWarehouse.value,
 					status: 'Active',
 				},
-				fields: ['name as serial_no', 'warehouse'],
+				fields: ['name as serial_no', 'warehouse', 'mrp'],
 				limit_page_length: 500,
 			})
 

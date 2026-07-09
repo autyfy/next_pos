@@ -332,6 +332,23 @@ const removedSerials = ref([]) // Track serials removed during this edit session
 const originalSerials = ref([]) // Original serials when dialog opened
 const localInsuranceSerialNo = ref("") // Insurance serial number for insurance items
 
+// Returns the MRP for a serial number from the store cache, or null if not set.
+function getSerialMrp(serialNo) {
+	const cached = serialStore.cache.get(localItem.value?.item_code)
+	if (!cached) return null
+	const entry = cached.serials.find(s => s.serial_no === serialNo)
+	return entry?.mrp > 0 ? entry.mrp : null
+}
+
+// When serials change, apply the first serial's MRP as the rate (if it has one).
+// Falls back to the price list rate so non-MRP items are unaffected.
+function applySerialMrp() {
+	if (!localItem.value?.has_serial_no || localSerials.value.length === 0) return
+	const mrp = getSerialMrp(localSerials.value[0])
+	localRate.value = mrp ?? (localItem.value.price_list_rate || localItem.value.rate || 0)
+	calculateTotals()
+}
+
 const show = computed({
 	get: () => props.modelValue,
 	set: (val) => emit("update:modelValue", val),
@@ -366,6 +383,8 @@ watch(
 				removedSerials.value = [] // Reset removed serials tracker
 				// For serial items, quantity must match serial count
 				localQuantity.value = serials.length
+				// Apply MRP from serial if set, else keep price list rate
+				applySerialMrp()
 			} else {
 				localSerials.value = []
 				originalSerials.value = []
@@ -554,7 +573,8 @@ function removeSerial(serialNo) {
 		removedSerials.value.push(serialNo)
 		// Update quantity to match serial count
 		localQuantity.value = localSerials.value.length
-		calculateTotals()
+		// Re-apply MRP from the new first serial (may have different MRP)
+		applySerialMrp()
 	}
 }
 

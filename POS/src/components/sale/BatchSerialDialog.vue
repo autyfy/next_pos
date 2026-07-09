@@ -364,6 +364,13 @@ function handleConfirm() {
 		result.serial_no = selectedList.join("\n")
 		result.quantity = selectedList.length
 
+		// If the first selected serial has an MRP, use it as the rate.
+		// Falls back to price list rate (no rate key emitted) for serials without MRP.
+		const firstMrp = selectedSerials.value[0]?.mrp
+		if (firstMrp > 0) {
+			result.rate = firstMrp
+		}
+
 		// Remove selected serials from cache (they're now in cart)
 		serialStore.consumeSerials(props.item.item_code, selectedList)
 	}

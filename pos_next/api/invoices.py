@@ -786,11 +786,16 @@ def submit_invoice(data, invoice=None):
                     delattr(item, attr)
 
             if discount_pct > 0 and discount_pct < 100:
-                if item_rate > 0:
+                if item_rate > 0 and not flt(item.get("price_list_rate")):
+                    # Only reverse-calculate if the frontend didn't send price_list_rate.
+                    # Reverse-calc introduces floating-point drift (e.g. 9000.09 instead of
+                    # 9000) that makes ERPNext's calculate_item_rate fall through on submit
+                    # and quietly drop the discount, producing grand_total = MRP instead of
+                    # the discounted price and leaving the invoice partially paid.
                     item.price_list_rate = item_rate / (1 - discount_pct / 100)
-                elif not item.get("price_list_rate"):
+                elif not flt(item.get("price_list_rate")):
                     item.price_list_rate = item_rate
-            elif not item.get("price_list_rate"):
+            elif not flt(item.get("price_list_rate")):
                 item.price_list_rate = item_rate
 
             if flt(item.price_list_rate) < item_rate:
@@ -843,7 +848,29 @@ def submit_invoice(data, invoice=None):
         taxes_and_charges_preserved = invoice_doc.taxes_and_charges
 
         # ── set_missing_values ──────────────────────────────────────────────
+        # Save payments before set_missing_values() — update_multi_mode_option()
+        # (called internally) clears all payment rows and replaces them with
+        # POS profile defaults at amount=0. on_submit then removes those zero-
+        # amount rows via clear_unallocated_mode_of_payments(), leaving the
+        # invoice with no payments and an outstanding balance equal to the total.
+        original_payments = [
+            {
+                "mode_of_payment": p.mode_of_payment,
+                "amount": flt(p.amount),
+                "type": p.type,
+                "account": p.account,
+            }
+            for p in invoice_doc.payments
+            if flt(p.amount)
+        ]
+
         invoice_doc.set_missing_values()
+
+        # Restore original payments if set_missing_values wiped them
+        if original_payments:
+            invoice_doc.set("payments", [])
+            for p in original_payments:
+                invoice_doc.append("payments", p)
 
         if not invoice_doc.taxes_and_charges and taxes_and_charges_preserved:
             invoice_doc.taxes_and_charges = taxes_and_charges_preserved

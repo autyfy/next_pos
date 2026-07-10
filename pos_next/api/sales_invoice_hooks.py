@@ -68,6 +68,13 @@ def validate(doc, method=None):
 		if finance_lender_total > 0:
 			doc.paid_amount = flt(doc.paid_amount) + finance_lender_total
 			doc.base_paid_amount = flt(doc.paid_amount * flt(doc.conversion_rate or 1))
+			# update_voucher_outstanding (called on submit) re-derives outstanding from PLE
+			# which has no entry for finance lender payments.  Set it here so the saved
+			# draft/submitted doc reflects the correct value; the post-submit hook in
+			# invoices.py overrides it in the DB after submit.
+			doc.outstanding_amount = max(
+				0, flt(doc.rounded_total or doc.grand_total) - doc.paid_amount
+			)
 
 
 def before_save(doc, method=None):
@@ -114,6 +121,9 @@ def before_save(doc, method=None):
 		if finance_lender_total > 0:
 			doc.paid_amount = flt(doc.paid_amount) + finance_lender_total
 			doc.base_paid_amount = flt(doc.paid_amount * flt(doc.conversion_rate or 1))
+			doc.outstanding_amount = max(
+				0, flt(doc.rounded_total or doc.grand_total) - doc.paid_amount
+			)
 
 
 def before_submit(doc, method=None):

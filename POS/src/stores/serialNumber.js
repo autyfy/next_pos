@@ -86,15 +86,9 @@ export const useSerialNumberStore = defineStore('serialNumber', () => {
 		loading.value = true
 
 		try {
-			const response = await call('frappe.client.get_list', {
-				doctype: 'Serial No',
-				filters: {
-					item_code: itemCode,
-					warehouse: currentWarehouse.value,
-					status: 'Active',
-				},
-				fields: ['name as serial_no', 'warehouse', 'mrp'],
-				limit_page_length: 500,
+			const response = await call('pos_next.api.items.get_serial_numbers', {
+				item_code: itemCode,
+				warehouse: currentWarehouse.value,
 			})
 
 			const serials = response || []

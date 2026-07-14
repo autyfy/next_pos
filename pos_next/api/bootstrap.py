@@ -158,6 +158,15 @@ def get_pos_settings(pos_profile):
 		if not pos_settings:
 			return get_default_pos_settings()
 
+		try:
+			pos_settings["_credit_customer_groups"] = frappe.get_all(
+				"Customer Group",
+				filters={"custom_stop_auto_creation": 1},
+				pluck="name",
+			)
+		except Exception:
+			pos_settings["_credit_customer_groups"] = []
+
 		return pos_settings
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Get POS Settings Error")
@@ -180,7 +189,8 @@ def get_default_pos_settings():
 		"decimal_precision": "2",
 		"allow_negative_stock": 0,
 		"enable_sales_persons": "Disabled",
-		"silent_print": 0
+		"silent_print": 0,
+		"_credit_customer_groups": [],
 	}
 
 

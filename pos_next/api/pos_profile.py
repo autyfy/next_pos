@@ -437,23 +437,32 @@ def update_warehouse(pos_profile, warehouse):
 def get_sales_persons(pos_profile=None):
 	"""Get all active individual sales persons (not groups) for POS, filtered by branch"""
 	try:
-		filters = {
-			"enabled": 1,
-			"is_group": 0  # Only get individual sales persons, not group nodes
-		}
-
+		branch = None
 		if pos_profile:
 			branch = frappe.db.get_value("POS Profile", pos_profile, "branch")
-			if branch and frappe.db.has_column("Sales Person", "custom_branch"):
-				filters["custom_branch"] = branch
 
-		sales_persons = frappe.get_list(
-			"Sales Person",
-			filters=filters,
-			fields=["name", "sales_person_name", "commission_rate", "employee"],
-			order_by="sales_person_name",
-			limit_page_length=0
-		)
+		if branch:
+			sales_persons = frappe.db.sql("""
+				SELECT name, sales_person_name, commission_rate, employee
+				FROM `tabSales Person`
+				WHERE enabled = 1 AND is_group = 0
+				AND (
+					custom_branch = %(branch)s
+					OR name IN (
+						SELECT parent FROM `tabSales Person Branch`
+						WHERE branch = %(branch)s
+					)
+				)
+				ORDER BY sales_person_name
+			""", {"branch": branch}, as_dict=True)
+		else:
+			sales_persons = frappe.get_list(
+				"Sales Person",
+				filters={"enabled": 1, "is_group": 0},
+				fields=["name", "sales_person_name", "commission_rate", "employee"],
+				order_by="sales_person_name",
+				limit_page_length=0
+			)
 
 		return sales_persons
 	except Exception as e:

@@ -1056,21 +1056,30 @@ def submit_invoice(data, invoice=None):
         try:
             invoice_doc.submit()
         except Exception as submit_error:
-            frappe.log_error(
-                title="POS Invoice Submit Error",
-                message=f"Invoice: {invoice_doc.name}, Error: {str(submit_error)}\n{frappe.get_traceback()}",
-                reference_doctype="Sales Invoice",
-                reference_name=invoice_doc.name,
-            )
+            _invoice_name = invoice_doc.name
+            _error_msg = f"Invoice: {_invoice_name}, Error: {str(submit_error)}\n{frappe.get_traceback()}"
             frappe.errprint(f"POS Invoice Submit Failed: {str(submit_error)}")
+
+            # Rollback BEFORE any cancel attempt. submit() leaves the DB in a partially
+            # committed state (docstatus=1 written by db_update, possibly partial SLEs).
+            # If we call cancel() on that state, ERPNext creates reversal SLEs that
+            # incorrectly reset serial number status back to Active — even though the
+            # original valid invoice already set them to Delivered.
+            frappe.db.rollback()
+
             try:
-                current_doc = frappe.get_doc("Sales Invoice", invoice_doc.name)
-                if current_doc.docstatus == 1:
-                    current_doc.flags.ignore_permissions = True
-                    current_doc.cancel()
-                frappe.delete_doc(
-                    "Sales Invoice", invoice_doc.name, force=True, ignore_permissions=True
+                frappe.log_error(
+                    title="POS Invoice Submit Error",
+                    message=_error_msg,
+                    reference_doctype="Sales Invoice",
+                    reference_name=_invoice_name,
                 )
+                # After rollback the invoice is back to draft (docstatus=0) or gone.
+                # Delete it directly — no cancel needed, no reversal SLEs created.
+                if frappe.db.exists("Sales Invoice", _invoice_name):
+                    frappe.delete_doc(
+                        "Sales Invoice", _invoice_name, force=True, ignore_permissions=True
+                    )
                 frappe.db.commit()
             except Exception:
                 pass

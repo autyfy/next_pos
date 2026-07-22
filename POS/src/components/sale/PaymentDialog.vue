@@ -789,11 +789,11 @@
 				<!-- Complete/Partial Payment Button -->
 				<button
 					@click="completePayment"
-					:disabled="!canComplete"
+					:disabled="!canComplete || isSubmitting"
 					:class="[
 						'w-full inline-flex items-center justify-center gap-2 transition-colors focus:outline-none',
 						'h-12 text-base font-semibold px-4 rounded-lg touch-manipulation',
-						!canComplete
+						(!canComplete || isSubmitting)
 							? 'bg-blue-300 text-white cursor-not-allowed'
 							: 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-400'
 					]"
@@ -923,11 +923,11 @@
 					<!-- Complete/Partial Payment Button -->
 					<button
 						@click="completePayment"
-						:disabled="!canComplete"
+						:disabled="!canComplete || isSubmitting"
 						:class="[
 							'inline-flex items-center justify-center gap-2 transition-colors focus:outline-none',
 							'h-9 text-sm font-semibold px-5 rounded-lg',
-							!canComplete
+							(!canComplete || isSubmitting)
 								? 'bg-blue-300 text-white cursor-not-allowed'
 								: 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-400'
 						]"
@@ -1029,6 +1029,11 @@ const loadingFinanceLenders = ref(false)
 // Advances state
 const advances = ref([])
 const loadingAdvances = ref(false)
+
+// Submission lock — prevents double-click / double-emit before dialog closes
+const isSubmitting = ref(false)
+// Per-open UUID sent to backend for idempotent deduplication on network retry
+const idempotencyKey = ref('')
 
 // Discount Ledger state
 const discountLedgerRows = ref([])
@@ -1510,6 +1515,10 @@ watch(show, (newVal) => {
 		// Reset narration
 		narration.value = ''
 
+		// Reset submission lock and generate a fresh idempotency key for this payment attempt
+		isSubmitting.value = false
+		idempotencyKey.value = crypto.randomUUID()
+
 		// Add default Finance Lender row with Customer mode selected
 		// Use nextTick to ensure the array is reactive before adding
 		setTimeout(() => {
@@ -1902,10 +1911,13 @@ function completePayment() {
 		salesPersons: selectedSalesPersons.value
 	})
 
-	if (!canComplete.value) {
-		console.warn('[PaymentDialog] Cannot complete - validation failed')
+	if (!canComplete.value || isSubmitting.value) {
+		console.warn('[PaymentDialog] Cannot complete - validation failed or already submitting')
 		return
 	}
+
+	// Lock the button immediately to prevent double-click before dialog closes
+	isSubmitting.value = true
 
 	// Check if payment is partial based on remaining amount (not totalPaid vs grandTotal)
 	// This correctly accounts for advances + finance lender payments
@@ -1951,6 +1963,7 @@ function completePayment() {
 			actual_discount: row.actual_discount || 0,
 			discount: row.discount || 0,
 		})),
+		idempotency_key: idempotencyKey.value || null,
 	}
 
 	console.log('[PaymentDialog] Emitting payment-completed:', paymentData)

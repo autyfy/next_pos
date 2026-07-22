@@ -1681,6 +1681,11 @@ async function handlePaymentCompleted(paymentData) {
 			// Get item codes from cart before clearing
 			const soldItemCodes = cartStore.invoiceItems.map(item => item.item_code)
 
+			// Set idempotency key so the backend can deduplicate on network retry
+			if (paymentData.idempotency_key) {
+				cartStore.idempotencyKey = paymentData.idempotency_key
+			}
+
 			try {
 				const result = await cartStore.submitInvoice()
 

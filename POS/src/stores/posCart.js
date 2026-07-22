@@ -31,6 +31,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		taxInclusive,
 		taxRules,
 		remarks,
+		idempotencyKey,
 		addItem: addItemToInvoice,
 		removeItem,
 		updateItemQuantity,
@@ -820,6 +821,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		financeLenderOptions,
 		invoiceAdvances,
 		remarks, // Remarks/Narration for Sales Invoice
+		idempotencyKey,
 		// Computed
 		itemCount,
 		isEmpty,

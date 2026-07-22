@@ -33,6 +33,7 @@ def after_migrate():
 		install_fixtures(quiet=True)
 		setup_default_print_format(quiet=True)
 		ensure_sales_person_branch_doctype(quiet=True)
+		ensure_idempotency_key_field(quiet=True)
 		frappe.db.commit()
 		log_message("POS Next: Fixtures updated successfully", level="success")
 	except Exception as e:
@@ -255,6 +256,35 @@ def ensure_sales_person_branch_doctype(quiet=False):
 		log_message(f"Error ensuring Sales Person Branch doctype: {str(e)}", level="error")
 		frappe.log_error(
 			title="Sales Person Branch Doctype Error",
+			message=frappe.get_traceback()
+		)
+
+
+def ensure_idempotency_key_field(quiet=False):
+	"""
+	Ensure custom_idempotency_key hidden field exists on Sales Invoice.
+	Used to deduplicate POS submissions on network retry.
+	"""
+	try:
+		field_name = "Sales Invoice-custom_idempotency_key"
+		if not frappe.db.exists("Custom Field", field_name):
+			cf = frappe.new_doc("Custom Field")
+			cf.dt = "Sales Invoice"
+			cf.label = "Idempotency Key"
+			cf.fieldname = "custom_idempotency_key"
+			cf.fieldtype = "Data"
+			cf.hidden = 1
+			cf.no_copy = 1
+			cf.insert_after = "custom_finance_lender_payments"
+			cf.insert(ignore_permissions=True)
+			if not quiet:
+				log_message("Created Custom Field: Sales Invoice-custom_idempotency_key", level="info")
+		elif not quiet:
+			log_message("Custom Field already exists: Sales Invoice-custom_idempotency_key", level="info")
+	except Exception as e:
+		log_message(f"Error ensuring idempotency key field: {str(e)}", level="error")
+		frappe.log_error(
+			title="Idempotency Key Field Error",
 			message=frappe.get_traceback()
 		)
 

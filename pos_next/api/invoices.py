@@ -698,6 +698,7 @@ def submit_invoice(data, invoice=None):
 
         # ── Extract submission-specific fields ─────────────────────────────
         reclaim_name = data.pop("_reclaim_name", None)  # set by backward-compat block above
+        idempotency_key = data.pop("idempotency_key", None) or None
         advances_data = data.get("advances") or []
         sales_team_data = data.get("sales_team") or []
         finance_lender_data = data.get("custom_finance_lender_payments") or []
@@ -708,6 +709,32 @@ def submit_invoice(data, invoice=None):
         shipping_address = data.get("shipping_address_name")
         discount_amount = flt(data.get("discount_amount") or 0)
         custom_discount_ledger = data.get("custom_discount_ledger") or []
+
+        # ── Idempotency guard: return already-submitted invoice for this key ──
+        # Handles network-retry scenario: if the first request succeeded but the
+        # response never reached the client, a retry with the same key returns the
+        # existing invoice instead of inserting a duplicate (and wasting a number).
+        if idempotency_key:
+            existing_name = frappe.db.get_value(
+                "Sales Invoice",
+                {"custom_idempotency_key": idempotency_key, "docstatus": 1},
+                "name",
+            )
+            if existing_name:
+                frappe.logger().info(
+                    f"[POS Submit] Idempotent replay for key={idempotency_key}: returning {existing_name}"
+                )
+                existing = frappe.get_doc("Sales Invoice", existing_name)
+                return {
+                    "name": existing.name,
+                    "status": existing.docstatus,
+                    "grand_total": existing.grand_total,
+                    "total": existing.total,
+                    "net_total": existing.net_total,
+                    "outstanding_amount": existing.outstanding_amount,
+                    "paid_amount": existing.paid_amount,
+                    "change_amount": getattr(existing, "change_amount", 0),
+                }
 
         # Preserve remarks before any ORM processing
         remarks = data.get("remarks")
@@ -1150,6 +1177,21 @@ def submit_invoice(data, invoice=None):
                 "Sales Invoice", invoice_doc.name, "remarks", remarks, update_modified=False
             )
             frappe.db.commit()
+
+        # ── Post-submit: store idempotency key for replay protection ────────
+        if idempotency_key:
+            try:
+                frappe.db.set_value(
+                    "Sales Invoice",
+                    invoice_doc.name,
+                    "custom_idempotency_key",
+                    idempotency_key,
+                    update_modified=False,
+                )
+                frappe.db.commit()
+            except Exception:
+                # Non-fatal: field may not exist yet (before first migrate after install)
+                pass
 
         # ── Post-submit: credit redemption ──────────────────────────────────
         if redeemed_customer_credit and customer_credit_dict:

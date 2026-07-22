@@ -22,6 +22,7 @@ export function useInvoice() {
 	const taxRules = ref([]) // Tax rules from POS Profile
 	const taxInclusive = ref(false) // Tax inclusive setting from POS Settings
 	const remarks = ref(null) // Remarks/Narration for Sales Invoice
+	const idempotencyKey = ref('') // Per-payment-attempt UUID for deduplication
 	// Performance: Incrementally maintained aggregates (updated on add/remove/change)
 	// This avoids O(n) array reductions on every reactive change
 	const _cachedSubtotal = ref(0)
@@ -793,6 +794,7 @@ export function useInvoice() {
 			taxes_and_charges: currentTaxTemplate.value || null,
 			remarks: remarks.value || null,
 			change_amount: remainingAmount.value < 0 ? Math.abs(remainingAmount.value) : 0,
+			idempotency_key: idempotencyKey.value || null,
 		}
 
 		if (rawSalesTeam && rawSalesTeam.length > 0) {
@@ -907,6 +909,7 @@ export function useInvoice() {
 		discountLedger.value = []
 		couponCode.value = null
 		remarks.value = null
+		idempotencyKey.value = ''
 
 		// Reset incremental cache
 		_cachedSubtotal.value = 0
@@ -1079,6 +1082,7 @@ export function useInvoice() {
 		taxRules,
 		taxInclusive,
 		remarks,
+		idempotencyKey,
 		currentTaxTemplate,
 		isInterState,
 

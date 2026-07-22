@@ -32,6 +32,7 @@ def after_migrate():
 		# Migrate runs often, so we use quiet mode to reduce noise
 		install_fixtures(quiet=True)
 		setup_default_print_format(quiet=True)
+		ensure_sales_person_branch_doctype(quiet=True)
 		frappe.db.commit()
 		log_message("POS Next: Fixtures updated successfully", level="success")
 	except Exception as e:
@@ -202,6 +203,58 @@ def install_custom_field(doc_dict, quiet=False):
 		log_message(f"Error installing custom field {doc_dict.get('name')}: {str(e)}", level="error", indent=1)
 		frappe.log_error(
 			title=f"Custom Field Installation Error: {doc_dict.get('name')}",
+			message=frappe.get_traceback()
+		)
+
+
+def ensure_sales_person_branch_doctype(quiet=False):
+	"""
+	Ensure Sales Person Branch child doctype and its branches field on Sales Person exist.
+	Recreated as custom=1 so bench migrate never treats it as an orphan.
+	"""
+	try:
+		# 1. Child DocType
+		if not frappe.db.exists("DocType", "Sales Person Branch"):
+			dt = frappe.new_doc("DocType")
+			dt.name = "Sales Person Branch"
+			dt.module = "Setup"
+			dt.custom = 1
+			dt.istable = 1
+			dt.editable_grid = 1
+			dt.track_changes = 0
+			dt.append("fields", {
+				"fieldname": "branch",
+				"fieldtype": "Link",
+				"options": "Branch",
+				"label": "Branch",
+				"in_list_view": 1,
+				"reqd": 1,
+			})
+			dt.insert(ignore_permissions=True)
+			if not quiet:
+				log_message("Created DocType: Sales Person Branch", level="info")
+		elif not quiet:
+			log_message("DocType already exists: Sales Person Branch", level="info")
+
+		# 2. Table field on Sales Person
+		if not frappe.db.exists("Custom Field", "Sales Person-branches"):
+			cf = frappe.new_doc("Custom Field")
+			cf.dt = "Sales Person"
+			cf.label = "Branches"
+			cf.fieldname = "branches"
+			cf.fieldtype = "Table"
+			cf.options = "Sales Person Branch"
+			cf.insert_after = "custom_branch"
+			cf.insert(ignore_permissions=True)
+			if not quiet:
+				log_message("Created Custom Field: Sales Person-branches", level="info")
+		elif not quiet:
+			log_message("Custom Field already exists: Sales Person-branches", level="info")
+
+	except Exception as e:
+		log_message(f"Error ensuring Sales Person Branch doctype: {str(e)}", level="error")
+		frappe.log_error(
+			title="Sales Person Branch Doctype Error",
 			message=frappe.get_traceback()
 		)
 

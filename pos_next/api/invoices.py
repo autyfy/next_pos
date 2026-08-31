@@ -1112,29 +1112,18 @@ def submit_invoice(data, invoice=None):
                 pass
             raise submit_error
 
-        # ── Post-submit: fix outstanding for finance lender invoices ───────
-        # make_gl_entries (POS, update_outstanding="No") calls update_voucher_outstanding
-        # which queries Payment Ledger Entry.  Finance lender rows don't create PLE
-        # entries, so the query returns grand_total as outstanding and writes that to DB
-        # via frappe.db.set_value, overriding whatever the hooks set on the doc object.
-        # We re-override here after submit has finished.
+        # ── Post-submit: reconcile finance lender Journal Entries ──────────
+        # All on_submit hooks (including the lender JE creator) have completed now,
+        # so derive outstanding/status from ERPNext's Payment Ledger. The on_submit
+        # hook also queues this after commit for submission paths outside this API.
         if finance_lender_data:
             try:
-                total_finance = sum(flt(fp.get("amount", 0)) for fp in finance_lender_data)
-                total_standard = sum(flt(p.amount) for p in invoice_doc.payments)
-                total_paid = total_finance + total_standard
-                if total_paid >= flt(invoice_doc.grand_total) - 0.01:
-                    frappe.db.set_value(
-                        "Sales Invoice",
-                        invoice_doc.name,
-                        {"outstanding_amount": 0, "status": "Paid"},
-                        update_modified=False,
-                    )
-                    frappe.db.commit()
-                    invoice_doc.outstanding_amount = 0
+                from pos_next.api.sales_invoice_hooks import reconcile_finance_lender_outstanding
+                reconcile_finance_lender_outstanding(invoice_doc.name)
+                invoice_doc.reload()
             except Exception as fl_err:
                 frappe.log_error(
-                    title="Finance Lender Outstanding Fix Error",
+                    title="Finance Lender Outstanding Reconciliation Error",
                     message=f"Invoice: {invoice_doc.name}, Error: {str(fl_err)}\n{frappe.get_traceback()}",
                 )
 

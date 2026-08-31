@@ -11,6 +11,19 @@ from frappe import _
 from frappe.utils import flt
 
 
+def reconcile_finance_lender_outstanding(invoice_name):
+	"""Refresh invoice outstanding/status after lender Journal Entries are posted."""
+	doc = frappe.get_doc("Sales Invoice", invoice_name)
+	if not doc.get("custom_finance_lender_payments"):
+		return
+
+	from erpnext.accounts.utils import update_voucher_outstanding
+
+	update_voucher_outstanding(
+		"Sales Invoice", doc.name, doc.debit_to, "Customer", doc.customer
+	)
+
+
 def validate(doc, method=None):
 	"""
 	Validate hook for Sales Invoice.
@@ -146,15 +159,19 @@ def before_submit(doc, method=None):
 def on_submit(doc, method=None):
 	"""
 	On Submit hook for Sales Invoice.
-	This runs AFTER the document is successfully submitted.
-	No action needed for remarks - they should already be preserved.
+	Reconcile finance-lender payments after all submit hooks have committed.
 
 	Args:
 		doc: Sales Invoice document
 		method: Hook method name (unused)
 	"""
-	# No action needed - remarks should already be preserved
-	pass
+	if doc.get("custom_finance_lender_payments"):
+		frappe.enqueue(
+			"pos_next.api.sales_invoice_hooks.reconcile_finance_lender_outstanding",
+			queue="short",
+			enqueue_after_commit=True,
+			invoice_name=doc.name,
+		)
 
 
 def before_cancel(doc, method=None):

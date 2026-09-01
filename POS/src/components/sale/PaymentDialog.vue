@@ -2027,12 +2027,17 @@ function hideDiscountAccountDropdown(index) {
 async function searchDiscountAccount(index) {
 	const row = discountLedgerRows.value[index]
 	row.showDropdown = true
+	if (!props.company) {
+		row.accountOptions = []
+		return
+	}
 	const searchTerm = row.discount_ledger_search || ''
 	try {
 		const result = await searchDiscountAccountResource.submit({
 			doctype: 'Account',
 			filters: JSON.stringify([
 				['custom_is_discount_ledger', '=', 1],
+				['company', '=', props.company],
 				['name', 'like', `%${searchTerm}%`],
 			]),
 			fields: JSON.stringify(['name']),

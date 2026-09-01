@@ -23,6 +23,7 @@ declare module 'vue' {
     EditItemDialog: typeof import('./src/components/sale/EditItemDialog.vue')['default']
     InstallAppBadge: typeof import('./src/components/common/InstallAppBadge.vue')['default']
     InsuranceSerialDialog: typeof import('./src/components/sale/InsuranceSerialDialog.vue')['default']
+    InsuranceSupplierDialog: typeof import('./src/components/sale/InsuranceSupplierDialog.vue')['default']
     InvoiceCart: typeof import('./src/components/sale/InvoiceCart.vue')['default']
     InvoiceDetailDialog: typeof import('./src/components/invoices/InvoiceDetailDialog.vue')['default']
     InvoiceFilters: typeof import('./src/components/invoices/InvoiceFilters.vue')['default']

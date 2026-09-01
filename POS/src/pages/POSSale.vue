@@ -387,7 +387,14 @@
 			@batch-serial-selected="handleBatchSerialSelected"
 		/>
 
-		<!-- Insurance Serial Number Dialog -->
+		<!-- Insurance Supplier and Serial Number Dialogs -->
+		<InsuranceSupplierDialog
+			v-model="showInsuranceSupplierDialog"
+			:item="cartStore.pendingItem"
+			:company="shiftStore.profileCompany"
+			@supplier-selected="handleInsuranceSupplierSelected"
+		/>
+
 		<InsuranceSerialDialog
 			v-model="uiStore.showInsuranceSerialDialog"
 			:item="cartStore.pendingItem"
@@ -706,6 +713,7 @@ import ManagementSlider from "@/components/pos/ManagementSlider.vue"
 import POSHeader from "@/components/pos/POSHeader.vue"
 import BatchSerialDialog from "@/components/sale/BatchSerialDialog.vue"
 import InsuranceSerialDialog from "@/components/sale/InsuranceSerialDialog.vue"
+import InsuranceSupplierDialog from "@/components/sale/InsuranceSupplierDialog.vue"
 import CouponDialog from "@/components/sale/CouponDialog.vue"
 import CreateCustomerDialog from "@/components/sale/CreateCustomerDialog.vue"
 import CustomerDialog from "@/components/sale/CustomerDialog.vue"
@@ -781,6 +789,8 @@ const { isRTL } = useLocale()
 // Component refs
 const itemsSelectorRef = ref(null)
 const offersDialogRef = ref(null)
+const showInsuranceSupplierDialog = ref(false)
+const selectedInsuranceSupplier = ref(null)
 const containerRef = ref(null)
 const dividerRef = ref(null)
 const pendingPaymentAfterCustomer = ref(false)
@@ -1486,7 +1496,8 @@ async function handleItemSelected(item, autoAdd = false) {
 
 	if (requiresInsuranceSrNo) {
 		cartStore.setPendingItem(item, 1)
-		uiStore.showInsuranceSerialDialog = true
+		selectedInsuranceSupplier.value = null
+		showInsuranceSupplierDialog.value = true
 		return
 	}
 
@@ -1951,6 +1962,11 @@ function handleBatchSerialSelected(batchSerial) {
 	}
 }
 
+function handleInsuranceSupplierSelected(result) {
+	selectedInsuranceSupplier.value = result
+	uiStore.showInsuranceSerialDialog = true
+}
+
 function handleInsuranceSerialEntered(result) {
 	if (cartStore.pendingItem) {
 		const qty = result.quantity || cartStore.pendingItemQty
@@ -1958,10 +1974,13 @@ function handleInsuranceSerialEntered(result) {
 			...cartStore.pendingItem,
 			quantity: qty,
 			custom_insurance_sr_no: result.insurance_sr_no,
+			custom_insurance_supplier: selectedInsuranceSupplier.value?.insurance_supplier || null,
+			custom_insurance_supplier_address: selectedInsuranceSupplier.value?.insurance_supplier_address || null,
 		}
 		try {
 			cartStore.addItem(itemToAdd, qty, false, shiftStore.currentProfile)
 			cartStore.clearPendingItem()
+			selectedInsuranceSupplier.value = null
 		} catch (error) {
 			showError(error.message)
 		}

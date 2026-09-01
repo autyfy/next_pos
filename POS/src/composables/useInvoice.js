@@ -247,6 +247,8 @@ export function useInvoice() {
 				item_tax_rate: item.item_tax_rate,
 				// Add insurance serial number for insurance items
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
+				custom_insurance_supplier: item.custom_insurance_supplier || null,
+				custom_insurance_supplier_address: item.custom_insurance_supplier_address || null,
 				custom_item_category: item.custom_item_category || null,
 				requires_insurance_sr_no: item.requires_insurance_sr_no || false,
 				// Stable unique row identifier — used by updateItemDetails to find the exact
@@ -724,6 +726,8 @@ export function useInvoice() {
 				custom_pos_offer_type: item.custom_pos_offer_type || null,
 				posa_offer_applied: item.posa_offer_applied ? 1 : 0,
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
+				custom_insurance_supplier: item.custom_insurance_supplier || null,
+				custom_insurance_supplier_address: item.custom_insurance_supplier_address || null,
 				// Allow zero valuation rate for insurance items (items with custom_insurance_sr_no)
 				allow_zero_valuation_rate: item.custom_insurance_sr_no ? 1 : 0,
 			})),
@@ -784,6 +788,8 @@ export function useInvoice() {
 				custom_pos_offer_type: item.custom_pos_offer_type || null,
 				posa_offer_applied: item.posa_offer_applied ? 1 : 0,
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
+				custom_insurance_supplier: item.custom_insurance_supplier || null,
+				custom_insurance_supplier_address: item.custom_insurance_supplier_address || null,
 				allow_zero_valuation_rate: item.custom_insurance_sr_no ? 1 : 0,
 			})),
 			payments: rawPayments.map((p) => ({

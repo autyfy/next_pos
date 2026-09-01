@@ -215,7 +215,7 @@
 				</div>
 
 				<!-- Item Discount Section (only if allowed by POS Profile) -->
-				<div v-if="settingsStore.allowItemDiscount" class="border-t border-gray-200 pt-4">
+				<div v-if="settingsStore.allowItemDiscount && !localItem.custom_restrict_discount" class="border-t border-gray-200 pt-4">
 					<label class="block text-sm font-medium text-gray-700 mb-3 text-start">{{ __('Item Discount') }}</label>
 					<div class="grid grid-cols-2 gap-3">
 						<!-- Discount Type -->

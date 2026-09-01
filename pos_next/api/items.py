@@ -25,6 +25,7 @@ ITEM_RESULT_FIELDS = [
 	"brand",
 	"has_variants",
 	"custom_company",
+	"custom_restrict_discount",
 	"disabled",
 	"custom_item_category",
 ]
@@ -293,12 +294,15 @@ def get_item_detail(item, doc=None, warehouse=None, price_list=None, company=Non
 	res["serial_no_data"] = serial_no_data
 
 	# Add item_group, brand and custom_item_category for offer eligibility checking
-	item_group, brand, custom_item_category = frappe.db.get_value(
-		"Item", item_code, ["item_group", "brand", "custom_item_category"]
+	item_group, brand, custom_item_category, custom_restrict_discount = frappe.db.get_value(
+		"Item",
+		item_code,
+		["item_group", "brand", "custom_item_category", "custom_restrict_discount"],
 	)
 	res["item_group"] = item_group
 	res["brand"] = brand
 	res["custom_item_category"] = custom_item_category
+	res["custom_restrict_discount"] = custom_restrict_discount or 0
 
 	# Check if item category requires insurance serial number entry
 	res["requires_insurance_sr_no"] = False

@@ -1752,7 +1752,7 @@ def apply_offers(invoice_data, selected_offers=None):
         prepared_items_for_pos_offers = [frappe._dict(row) for row in items]
         applied_pos_offer_rules = set()
 
-        for offer_name in pos_offer_names:
+        for offer_name in sorted(pos_offer_names):
             pos_offer = frappe.get_cached_doc("POS Offer", offer_name)
             if pos_offer.disable:
                 continue
@@ -1799,6 +1799,9 @@ def apply_offers(invoice_data, selected_offers=None):
                 item_doc.setdefault("pricing_rules", [])
                 if offer_name not in item_doc["pricing_rules"]:
                     item_doc["pricing_rules"].append(offer_name)
+                item_doc.posa_offers = pos_offer.title
+                item_doc.custom_pos_offer_type = pos_offer.offer_type
+                item_doc.posa_offer_applied = 1
                 offer_applied = True
 
             if offer_applied:

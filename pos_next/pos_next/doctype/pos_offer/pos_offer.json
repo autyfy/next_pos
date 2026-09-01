@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_bulk_edit": 1,
  "allow_rename": 1,
  "autoname": "field:title",
  "creation": "2021-06-06 14:05:24.843820",
@@ -12,6 +13,7 @@
   "description",
   "column_break_4",
   "disable",
+  "offer_type",
   "section_break_3",
   "apply_on",
   "offer",
@@ -312,13 +314,21 @@
    "fieldname": "coupon_based",
    "fieldtype": "Check",
    "label": "Coupon Code Based"
+  },
+  {
+   "fieldname": "offer_type",
+   "fieldtype": "Select",
+   "label": "Offer Type",
+   "options": "\nEducational\nFlat\nFinance"
   }
  ],
  "index_web_pages_for_search": 1,
- "modified": "2021-07-25 17:09:55.634113",
- "modified_by": "Administrator",
+ "links": [],
+ "modified": "2026-09-01 13:57:21.487996",
+ "modified_by": "toshar@iconceptstore.in",
  "module": "POS Next",
  "name": "POS Offer",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
@@ -388,9 +398,11 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "show_name_in_global_search": 1,
  "show_preview_popup": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
+ "states": [],
  "track_changes": 1
 }

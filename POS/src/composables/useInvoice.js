@@ -241,6 +241,7 @@ export function useInvoice() {
 				// Add item_group and brand for offer eligibility checking
 				item_group: item.item_group,
 				brand: item.brand,
+				custom_restrict_discount: item.custom_restrict_discount ? 1 : 0,
 				// Add tax template information
 				item_tax_template: item.item_tax_template,
 				item_tax_rate: item.item_tax_rate,
@@ -391,6 +392,11 @@ export function useInvoice() {
 	function updateItemDiscount(itemCode, discountPercentage) {
 		const item = invoiceItems.value.find((i) => i.item_code === itemCode)
 		if (item) {
+			if (item.custom_restrict_discount) {
+				showWarning(__("Manual discounts are restricted for this item. Apply a POS Offer instead."))
+				return false
+			}
+
 			// Validate discount percentage (0-100)
 			let validDiscount = Number.parseFloat(discountPercentage) || 0
 			if (validDiscount < 0) validDiscount = 0
@@ -714,6 +720,9 @@ export function useInvoice() {
 				conversion_factor: item.conversion_factor || 1,
 				discount_percentage: item.discount_percentage || 0,
 				discount_amount: item.discount_amount || 0,
+				posa_offers: item.posa_offers || null,
+				custom_pos_offer_type: item.custom_pos_offer_type || null,
+				posa_offer_applied: item.posa_offer_applied ? 1 : 0,
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
 				// Allow zero valuation rate for insurance items (items with custom_insurance_sr_no)
 				allow_zero_valuation_rate: item.custom_insurance_sr_no ? 1 : 0,
@@ -771,6 +780,9 @@ export function useInvoice() {
 				conversion_factor: item.conversion_factor || 1,
 				discount_percentage: item.discount_percentage || 0,
 				discount_amount: item.discount_amount || 0,
+				posa_offers: item.posa_offers || null,
+				custom_pos_offer_type: item.custom_pos_offer_type || null,
+				posa_offer_applied: item.posa_offer_applied ? 1 : 0,
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
 				allow_zero_valuation_rate: item.custom_insurance_sr_no ? 1 : 0,
 			})),

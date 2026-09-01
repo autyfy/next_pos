@@ -204,6 +204,9 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 		invoiceItems.value.forEach((item, index) => {
 			const serverItem = serverItems[index] || {}
+			item.posa_offers = serverItem.posa_offers || null
+			item.custom_pos_offer_type = serverItem.custom_pos_offer_type || null
+			item.posa_offer_applied = serverItem.posa_offer_applied ? 1 : 0
 			const serverDiscountPercentage =
 				Number.parseFloat(serverItem.discount_percentage) || 0
 			const serverDiscountAmount = Number.parseFloat(serverItem.discount_amount) || 0
@@ -681,10 +684,10 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			if (updatedDetails.warehouse !== undefined) {
 				cartItem.warehouse = updatedDetails.warehouse
 			}
-			if (updatedDetails.discount_percentage !== undefined) {
+			if (!cartItem.custom_restrict_discount && updatedDetails.discount_percentage !== undefined) {
 				cartItem.discount_percentage = updatedDetails.discount_percentage
 			}
-			if (updatedDetails.discount_amount !== undefined) {
+			if (!cartItem.custom_restrict_discount && updatedDetails.discount_amount !== undefined) {
 				cartItem.discount_amount = updatedDetails.discount_amount
 			}
 			// Update price_list_rate if provided (for UOM changes)

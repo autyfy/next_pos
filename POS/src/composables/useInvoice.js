@@ -178,8 +178,9 @@ export function useInvoice() {
 		// Insurance serial items (items with custom_insurance_sr_no) should never be merged
 		// Each insurance item must be a separate cart line with qty=1
 		const isInsuranceSerialItem = item.custom_insurance_sr_no || item.requires_insurance_sr_no
+		const isPreorderItem = item.custom_pre_order_id || item.custom_is_preorder
 
-		const existingItem = isInsuranceSerialItem ? null : invoiceItems.value.find(
+		const existingItem = (isInsuranceSerialItem || isPreorderItem) ? null : invoiceItems.value.find(
 			(i) => i.item_code === item.item_code && i.uom === itemUom,
 		)
 
@@ -242,6 +243,8 @@ export function useInvoice() {
 				item_group: item.item_group,
 				brand: item.brand,
 				custom_restrict_discount: item.custom_restrict_discount ? 1 : 0,
+				custom_is_preorder: item.custom_is_preorder ? 1 : 0,
+				custom_pre_order_id: item.custom_pre_order_id || null,
 				// Add tax template information
 				item_tax_template: item.item_tax_template,
 				item_tax_rate: item.item_tax_rate,
@@ -728,6 +731,7 @@ export function useInvoice() {
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
 				custom_insurance_supplier: item.custom_insurance_supplier || null,
 				custom_insurance_supplier_address: item.custom_insurance_supplier_address || null,
+				custom_pre_order_id: item.custom_pre_order_id || null,
 				// Allow zero valuation rate for insurance items (items with custom_insurance_sr_no)
 				allow_zero_valuation_rate: item.custom_insurance_sr_no ? 1 : 0,
 			})),
@@ -790,6 +794,7 @@ export function useInvoice() {
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
 				custom_insurance_supplier: item.custom_insurance_supplier || null,
 				custom_insurance_supplier_address: item.custom_insurance_supplier_address || null,
+				custom_pre_order_id: item.custom_pre_order_id || null,
 				allow_zero_valuation_rate: item.custom_insurance_sr_no ? 1 : 0,
 			})),
 			payments: rawPayments.map((p) => ({

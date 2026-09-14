@@ -402,6 +402,13 @@
 			@insurance-serial-entered="handleInsuranceSerialEntered"
 		/>
 
+		<PreOrderDialog
+			v-model="showPreOrderDialog"
+			:item="cartStore.pendingItem"
+			:quantity="cartStore.pendingItemQty"
+			@preorder-id-entered="handlePreOrderIdEntered"
+		/>
+
 		<!-- Generic Item Selection Dialog -->
 		<ItemSelectionDialog
 			v-model="uiStore.showItemSelectionDialog"
@@ -714,6 +721,7 @@ import POSHeader from "@/components/pos/POSHeader.vue"
 import BatchSerialDialog from "@/components/sale/BatchSerialDialog.vue"
 import InsuranceSerialDialog from "@/components/sale/InsuranceSerialDialog.vue"
 import InsuranceSupplierDialog from "@/components/sale/InsuranceSupplierDialog.vue"
+import PreOrderDialog from "@/components/sale/PreOrderDialog.vue"
 import CouponDialog from "@/components/sale/CouponDialog.vue"
 import CreateCustomerDialog from "@/components/sale/CreateCustomerDialog.vue"
 import CustomerDialog from "@/components/sale/CustomerDialog.vue"
@@ -791,6 +799,7 @@ const itemsSelectorRef = ref(null)
 const offersDialogRef = ref(null)
 const showInsuranceSupplierDialog = ref(false)
 const selectedInsuranceSupplier = ref(null)
+const showPreOrderDialog = ref(false)
 const containerRef = ref(null)
 const dividerRef = ref(null)
 const pendingPaymentAfterCustomer = ref(false)
@@ -1423,7 +1432,14 @@ async function handleItemSelected(item, autoAdd = false) {
 		}
 	}
 
-	// Auto-add mode - skip insurance serial check for auto-add (barcode scan)
+	// Preorder items always require an ID, including when selected by barcode.
+	if (autoAdd && itemToAdd.custom_is_preorder) {
+		cartStore.setPendingItem(itemToAdd, 1)
+		showPreOrderDialog.value = true
+		return
+	}
+
+	// Auto-add mode - skip insurance serial check for other auto-added items.
 	if (autoAdd) {
 		try {
 			console.log("[POSSale] Adding item to cart with autoAdd=true")
@@ -1472,6 +1488,12 @@ async function handleItemSelected(item, autoAdd = false) {
 	if (item.has_batch_no || item.has_serial_no) {
 		cartStore.setPendingItem(item, 1)
 		uiStore.showBatchSerialDialog = true
+		return
+	}
+
+	if (item.custom_is_preorder) {
+		cartStore.setPendingItem(itemToAdd, 1)
+		showPreOrderDialog.value = true
 		return
 	}
 
@@ -1789,6 +1811,12 @@ async function handleOptionSelected(option) {
 				uiStore.showItemSelectionDialog = false
 				uiStore.showBatchSerialDialog = true
 			} else {
+				if (variant.custom_is_preorder) {
+					cartStore.setPendingItem(variant, cartStore.pendingItemQty)
+					uiStore.showItemSelectionDialog = false
+					showPreOrderDialog.value = true
+					return
+				}
 				try {
 					cartStore.addItem(variant, cartStore.pendingItemQty, false, shiftStore.currentProfile)
 					uiStore.showItemSelectionDialog = false
@@ -1821,6 +1849,12 @@ async function handleOptionSelected(option) {
 				uiStore.showItemSelectionDialog = false
 				uiStore.showBatchSerialDialog = true
 			} else {
+				if (itemToAdd.custom_is_preorder) {
+					cartStore.setPendingItem(itemToAdd, qty)
+					uiStore.showItemSelectionDialog = false
+					showPreOrderDialog.value = true
+					return
+				}
 				try {
 					cartStore.addItem(itemToAdd, qty, false, shiftStore.currentProfile)
 					uiStore.showItemSelectionDialog = false
@@ -1953,6 +1987,11 @@ function handleBatchSerialSelected(batchSerial) {
 			...batchSerial,
 			warehouse: shiftStore.profileWarehouse || cartStore.pendingItem.warehouse,
 		}
+		if (itemToAdd.custom_is_preorder) {
+			cartStore.setPendingItem(itemToAdd, qty)
+			showPreOrderDialog.value = true
+			return
+		}
 		try {
 			cartStore.addItem(itemToAdd, qty, false, shiftStore.currentProfile)
 			cartStore.clearPendingItem()
@@ -1965,6 +2004,35 @@ function handleBatchSerialSelected(batchSerial) {
 function handleInsuranceSupplierSelected(result) {
 	selectedInsuranceSupplier.value = result
 	uiStore.showInsuranceSerialDialog = true
+}
+
+async function handlePreOrderIdEntered(result) {
+	if (!cartStore.pendingItem) return
+
+	const itemToAdd = { ...cartStore.pendingItem, custom_pre_order_id: result.pre_order_id }
+	let requiresInsuranceSrNo = itemToAdd.requires_insurance_sr_no
+	if (requiresInsuranceSrNo === undefined && itemToAdd.custom_item_category) {
+		try {
+			const insuranceResult = await call("pos_next.api.items.check_insurance_serial_required", { item_code: itemToAdd.item_code })
+			requiresInsuranceSrNo = insuranceResult?.requires_insurance_sr_no
+		} catch (error) {
+			console.error("[POSSale] Error checking insurance serial requirement:", error)
+		}
+	}
+
+	cartStore.setPendingItem({ ...itemToAdd, requires_insurance_sr_no: !!requiresInsuranceSrNo }, result.quantity || 1)
+	if (requiresInsuranceSrNo) {
+		selectedInsuranceSupplier.value = null
+		showInsuranceSupplierDialog.value = true
+		return
+	}
+
+	try {
+		cartStore.addItem(itemToAdd, result.quantity || 1, false, shiftStore.currentProfile)
+		cartStore.clearPendingItem()
+	} catch (error) {
+		showError(error.message)
+	}
 }
 
 function handleInsuranceSerialEntered(result) {

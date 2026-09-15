@@ -26,7 +26,7 @@ ITEM_RESULT_FIELDS = [
 	"has_variants",
 	"custom_company",
 	"custom_restrict_discount",
-	"custom_is_preorder",
+	"custom_preorder_code",
 	"disabled",
 	"custom_item_category",
 ]
@@ -295,16 +295,16 @@ def get_item_detail(item, doc=None, warehouse=None, price_list=None, company=Non
 	res["serial_no_data"] = serial_no_data
 
 	# Add item_group, brand and custom_item_category for offer eligibility checking
-	item_group, brand, custom_item_category, custom_restrict_discount, custom_is_preorder = frappe.db.get_value(
+	item_group, brand, custom_item_category, custom_restrict_discount, custom_preorder_code = frappe.db.get_value(
 		"Item",
 		item_code,
-		["item_group", "brand", "custom_item_category", "custom_restrict_discount", "custom_is_preorder"],
+		["item_group", "brand", "custom_item_category", "custom_restrict_discount", "custom_preorder_code"],
 	)
 	res["item_group"] = item_group
 	res["brand"] = brand
 	res["custom_item_category"] = custom_item_category
 	res["custom_restrict_discount"] = custom_restrict_discount or 0
-	res["custom_is_preorder"] = custom_is_preorder or 0
+	res["custom_preorder_code"] = custom_preorder_code or 0
 
 	# Check if item category requires insurance serial number entry
 	res["requires_insurance_sr_no"] = False
@@ -606,7 +606,7 @@ def get_item_variants(template_item, pos_profile):
 				"item_group",
 				"brand",
 				"custom_company",
-				"custom_is_preorder",
+				"custom_preorder_code",
 			],
 		)
 

@@ -178,7 +178,7 @@ export function useInvoice() {
 		// Insurance serial items (items with custom_insurance_sr_no) should never be merged
 		// Each insurance item must be a separate cart line with qty=1
 		const isInsuranceSerialItem = item.custom_insurance_sr_no || item.requires_insurance_sr_no
-		const isPreorderItem = item.custom_pre_order_id || item.custom_is_preorder
+		const isPreorderItem = item.custom_pre_order_id || item.custom_preorder_code
 
 		const existingItem = (isInsuranceSerialItem || isPreorderItem) ? null : invoiceItems.value.find(
 			(i) => i.item_code === item.item_code && i.uom === itemUom,
@@ -243,7 +243,7 @@ export function useInvoice() {
 				item_group: item.item_group,
 				brand: item.brand,
 				custom_restrict_discount: item.custom_restrict_discount ? 1 : 0,
-				custom_is_preorder: item.custom_is_preorder ? 1 : 0,
+				custom_preorder_code: item.custom_preorder_code ? 1 : 0,
 				custom_pre_order_id: item.custom_pre_order_id || null,
 				// Add tax template information
 				item_tax_template: item.item_tax_template,

@@ -1433,7 +1433,7 @@ async function handleItemSelected(item, autoAdd = false) {
 	}
 
 	// Preorder items always require an ID, including when selected by barcode.
-	if (autoAdd && itemToAdd.custom_is_preorder) {
+	if (autoAdd && itemToAdd.custom_preorder_code) {
 		cartStore.setPendingItem(itemToAdd, 1)
 		showPreOrderDialog.value = true
 		return
@@ -1491,7 +1491,7 @@ async function handleItemSelected(item, autoAdd = false) {
 		return
 	}
 
-	if (item.custom_is_preorder) {
+	if (item.custom_preorder_code) {
 		cartStore.setPendingItem(itemToAdd, 1)
 		showPreOrderDialog.value = true
 		return
@@ -1811,7 +1811,7 @@ async function handleOptionSelected(option) {
 				uiStore.showItemSelectionDialog = false
 				uiStore.showBatchSerialDialog = true
 			} else {
-				if (variant.custom_is_preorder) {
+				if (variant.custom_preorder_code) {
 					cartStore.setPendingItem(variant, cartStore.pendingItemQty)
 					uiStore.showItemSelectionDialog = false
 					showPreOrderDialog.value = true
@@ -1849,7 +1849,7 @@ async function handleOptionSelected(option) {
 				uiStore.showItemSelectionDialog = false
 				uiStore.showBatchSerialDialog = true
 			} else {
-				if (itemToAdd.custom_is_preorder) {
+				if (itemToAdd.custom_preorder_code) {
 					cartStore.setPendingItem(itemToAdd, qty)
 					uiStore.showItemSelectionDialog = false
 					showPreOrderDialog.value = true
@@ -1987,7 +1987,7 @@ function handleBatchSerialSelected(batchSerial) {
 			...batchSerial,
 			warehouse: shiftStore.profileWarehouse || cartStore.pendingItem.warehouse,
 		}
-		if (itemToAdd.custom_is_preorder) {
+		if (itemToAdd.custom_preorder_code) {
 			cartStore.setPendingItem(itemToAdd, qty)
 			showPreOrderDialog.value = true
 			return

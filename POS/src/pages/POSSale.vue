@@ -220,7 +220,7 @@
 						:applied-offers="cartStore.appliedOffers"
 						:warehouses="profileWarehouses"
 						@update-quantity="cartStore.updateItemQuantity"
-						@remove-item="(itemCode, uom) => cartStore.removeItem(itemCode, uom)"
+						@remove-item="(itemCode, uom, rowId) => cartStore.removeItem(itemCode, uom, rowId)"
 						@select-customer="handleCustomerSelected"
 						@create-customer="handleCreateCustomer"
 						@edit-customer="handleEditCustomer"
@@ -229,6 +229,7 @@
 						@save-draft="handleSaveDraft"
 						@apply-coupon="uiStore.showCouponDialog = true"
 						@show-offers="uiStore.showOffersDialog = true"
+						@show-pricing-rules="uiStore.showPricingRulesDialog = true"
 						@remove-offer="offer => cartStore.removeOffer(offer, shiftStore.currentProfile, offersDialogRef.value)"
 						@update-uom="cartStore.changeItemUOM"
 						@edit-item="handleEditItem"
@@ -374,8 +375,24 @@
 			:company="shiftStore.profileCompany"
 			:currency="shiftStore.profileCurrency"
 			:applied-offers="cartStore.appliedOffers"
+			source-filter="POS Offer"
 			@apply-offer="handleApplyOffer"
 			@remove-offer="offer => cartStore.removeOffer(offer, shiftStore.currentProfile, offersDialogRef.value)"
+		/>
+
+		<OffersDialog
+			ref="pricingRulesDialogRef"
+			v-model="uiStore.showPricingRulesDialog"
+			:subtotal="cartStore.subtotal"
+			:items="cartStore.invoiceItems"
+			:pos-profile="shiftStore.profileName"
+			:customer="cartStore.customer?.name || cartStore.customer"
+			:company="shiftStore.profileCompany"
+			:currency="shiftStore.profileCurrency"
+			:applied-offers="cartStore.appliedOffers"
+			source-filter="Rules"
+			v-on:apply-offer="handleApplyPricingRule"
+			v-on:remove-offer="offer => cartStore.removeOffer(offer, shiftStore.currentProfile, pricingRulesDialogRef.value)"
 		/>
 
 		<!-- Batch/Serial Dialog -->
@@ -797,6 +814,7 @@ const { isRTL } = useLocale()
 // Component refs
 const itemsSelectorRef = ref(null)
 const offersDialogRef = ref(null)
+const pricingRulesDialogRef = ref(null)
 const showInsuranceSupplierDialog = ref(false)
 const selectedInsuranceSupplier = ref(null)
 const showPreOrderDialog = ref(false)
@@ -1975,6 +1993,11 @@ async function handleApplyOffer(offer) {
 	if (success) {
 		uiStore.showOffersDialog = false
 	}
+}
+
+async function handleApplyPricingRule(rule) {
+	const success = await cartStore.applyOffer(rule, shiftStore.currentProfile, pricingRulesDialogRef.value)
+	if (success) uiStore.showPricingRulesDialog = false
 }
 
 function handleBatchSerialSelected(batchSerial) {

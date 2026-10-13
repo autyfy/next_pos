@@ -230,7 +230,7 @@
                                 </button>
                         </div>
 
-                        <!-- Offers & Coupon Buttons -->
+                        <!-- Offers, Pricing Rules & Coupon Buttons -->
                         <div class="flex gap-2">
                                 <!-- View All Offers Button -->
                                 <button
@@ -244,12 +244,17 @@
                                         </svg>
                                         <span class="text-[11px] font-bold text-green-700">{{ __('Offers') }}</span>
                                         <span
-                                                v-if="appliedOfferCount > 0 || offersStore.allEligibleOffers.length > 0"
+                                                v-if="appliedPOSOfferCount > 0 || eligiblePOSOfferCount > 0"
                                                 class="bg-green-600 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 flex-shrink-0 min-w-[16px] text-center"
                                         >
-                                                {{ appliedOfferCount > 0 ? appliedOfferCount : offersStore.allEligibleOffers.length }}
+                                                {{ appliedPOSOfferCount > 0 ? appliedPOSOfferCount : eligiblePOSOfferCount }}
                                         </span>
                                 </button>
+                                <button type="button" v-on:click="$emit('show-pricing-rules')" class="relative flex-1 flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 hover:border-blue-400 min-w-0 touch-manipulation" :aria-label="__('Select an applicable pricing rule')">
+                                        <span class="text-[11px] font-bold text-blue-700">{{ __('Bundle Offer') }}</span>
+                                        <span v-if="offersStore.allEligibleOffers.filter(offer => offer.source === 'Pricing Rule' || offer.source === 'Promotional Scheme').length" class="bg-blue-600 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5">{{ offersStore.allEligibleOffers.filter(offer => offer.source === 'Pricing Rule' || offer.source === 'Promotional Scheme').length }}</span>
+                                </button>
+
 
                                 <!-- Enter Coupon Code Button -->
                                 <button
@@ -443,6 +448,12 @@
 										</svg>
 										{{ __('+{0} FREE',  [item.free_qty]) }}
 									</span>
+									<span
+										v-if="item.promotion_qty > 0"
+										class="inline-flex items-center px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[9px] font-bold border border-blue-200 flex-shrink-0"
+									>
+										{{ __('{0} at {1}', [item.promotion_qty, formatCurrency(item.promotion_rate)]) }}
+									</span>
 									<!-- Discount Badge -->
 									<div
 										v-if="item.discount_amount && item.discount_amount > 0"
@@ -456,7 +467,7 @@
 								</div>
 								<button
 									type="button"
-									@click.stop="$emit('remove-item', item.item_code, item.uom)"
+									@click.stop="$emit('remove-item', item.item_code, item.uom, item._rowId)"
 									class="text-gray-400 hover:text-red-600 active:text-red-700 transition-colors flex-shrink-0 p-0.5 -m-0.5 touch-manipulation active:scale-90"
 									:aria-label="__('Remove {0}', [item.item_name])"
 									:title="__('Remove item')"
@@ -535,6 +546,7 @@
 											@keydown.enter="$event.target.blur()"
 											type="number"
 											min="0.0001"
+											:max="item.promotion_max_qty > 0 ? item.promotion_max_qty : undefined"
 											step="any"
 											inputmode="decimal"
 											class="w-10 sm:w-12 h-6 sm:h-7 text-center bg-white border-0 text-xs sm:text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -543,6 +555,7 @@
 										<button
 											type="button"
 											@click="incrementQuantity(item)"
+											:disabled="item.promotion_max_qty > 0 && item.quantity >= item.promotion_max_qty"
 											class="w-6 h-6 sm:w-7 sm:h-7 bg-white hover:bg-gray-100 active:bg-gray-200 flex items-center justify-center font-bold text-gray-700 transition-colors touch-manipulation border-s border-gray-200"
 											:aria-label="__('Increase quantity')"
 											:title="__('Increase quantity')"
@@ -821,6 +834,7 @@ const emit = defineEmits([
 	"apply-coupon",       // () - Open coupon application dialog
 	"show-coupons",       // () - Show available coupons
 	"show-offers",        // () - Show available offers dialog
+	"show-pricing-rules", // Show applicable standalone Pricing Rules
 	"remove-offer",       // (offerId) - Remove applied offer
 	"update-uom",         // (itemCode, newUom) - Change item's unit of measure
 	"edit-item",          // (item) - Open item edit dialog
@@ -999,7 +1013,12 @@ watch(
  * Used for the badge on the "Offers" button.
  * @returns {Number} Count of applied offers
  */
-const appliedOfferCount = computed(() => (props.appliedOffers || []).length)
+const eligiblePOSOfferCount = computed(() =>
+	offersStore.allEligibleOffers.filter((offer) => offer.source === "POS Offer").length,
+)
+const appliedPOSOfferCount = computed(() =>
+	(props.appliedOffers || []).filter((entry) => entry?.offer?.source === "POS Offer").length,
+)
 
 /**
  * Format tax label based on inter-state status and tax rules.
@@ -1312,7 +1331,7 @@ function getSmartStep(quantity) {
 function incrementQuantity(item) {
 	const step = getSmartStep(item.quantity)
 	const newQty = Math.round((item.quantity + step) * 10000) / 10000
-	emit("update-quantity", item.item_code, newQty, item.uom)
+	emit("update-quantity", item.item_code, newQty, item.uom, item._rowId)
 }
 
 /**
@@ -1327,9 +1346,9 @@ function decrementQuantity(item) {
 
 	if (newQty <= 0) {
 		// If quantity would be 0 or negative, remove the item
-		emit("remove-item", item.item_code, item.uom)
+		emit("remove-item", item.item_code, item.uom, item._rowId)
 	} else {
-		emit("update-quantity", item.item_code, newQty, item.uom)
+		emit("update-quantity", item.item_code, newQty, item.uom, item._rowId)
 	}
 }
 
@@ -1344,7 +1363,7 @@ function updateQuantity(item, value) {
 	const qty = Number.parseFloat(value)
 	// Allow any positive number during typing (don't round yet)
 	if (!isNaN(qty) && qty > 0) {
-		emit("update-quantity", item.item_code, qty, item.uom)
+		emit("update-quantity", item.item_code, qty, item.uom, item._rowId)
 	}
 }
 
@@ -1360,12 +1379,12 @@ function handleQuantityBlur(item) {
 	// When user leaves the input field, round and validate
 	if (!item.quantity || item.quantity <= 0) {
 		// If quantity is 0 or invalid, remove the item
-		emit("remove-item", item.item_code, item.uom)
+		emit("remove-item", item.item_code, item.uom, item._rowId)
 	} else {
 		// Round to 4 decimal places for consistency
 		const roundedQty = Math.round(item.quantity * 10000) / 10000
 		if (roundedQty !== item.quantity) {
-			emit("update-quantity", item.item_code, roundedQty, item.uom)
+			emit("update-quantity", item.item_code, roundedQty, item.uom, item._rowId)
 		}
 	}
 }

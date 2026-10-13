@@ -34,7 +34,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		idempotencyKey,
 		addItem: addItemToInvoice,
 		removeItem,
-		updateItemQuantity,
+		updateItemQuantity: updateInvoiceItemQuantity,
 		submitInvoice,
 		clearCart: clearInvoiceCart,
 		loadTaxRules,
@@ -114,7 +114,48 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		}
 
 		// Add item to cart - no toast notification for performance
+		const existingPromotionalItem = invoiceItems.value.find(
+			(row) => row.item_code === item.item_code &&
+				(row.uom || row.stock_uom) === (item.uom || item.stock_uom) &&
+				row.promotion_max_qty > 0,
+		)
+		if (existingPromotionalItem &&
+			Number(existingPromotionalItem.quantity || 0) + Number(qty || 0) > Number(existingPromotionalItem.promotion_max_qty)) {
+			const regularItem = invoiceItems.value.find(
+				(row) => row.item_code === item.item_code &&
+					(row.uom || row.stock_uom) === (item.uom || item.stock_uom) &&
+					!row.promotion_max_qty && !row.is_free_item,
+			)
+			if (regularItem) {
+				updateInvoiceItemQuantity(
+					regularItem.item_code,
+					Number(regularItem.quantity || 0) + Number(qty || 0),
+					regularItem.uom,
+					regularItem._rowId,
+				)
+			} else {
+				addItemToInvoice({ ...item, force_new_cart_line: true }, qty)
+			}
+			return true
+		}
+
 		addItemToInvoice(item, qty)
+		return true
+	}
+
+	function updateItemQuantity(itemCode, quantity, uom = null, rowId = null) {
+		const item = rowId
+			? invoiceItems.value.find((row) => row._rowId === rowId)
+			: invoiceItems.value.find(
+				(row) => row.item_code === itemCode && (!uom || row.uom === uom),
+			)
+		const requestedQty = Number.parseFloat(quantity) || 1
+		if (item?.promotion_max_qty > 0 && requestedQty > Number(item.promotion_max_qty)) {
+			showWarning(__("Add another eligible item before increasing this promotional item."))
+			return false
+		}
+		updateInvoiceItemQuantity(itemCode, requestedQty, uom, rowId)
+		return true
 	}
 
 	function clearCart() {
@@ -251,31 +292,117 @@ export const usePOSCartStore = defineStore("posCart", () => {
 	 * // Result: Cart item gets free_qty = 1 (shown as "2 items + 1 FREE")
 	 */
 	function processFreeItems(freeItems) {
-		// Reset all free quantities
-		invoiceItems.value.forEach(item => {
+		// Restore any product rate changed by a previously applied rule.
+		invoiceItems.value.forEach((item) => {
 			item.free_qty = 0
+			item.promotion_qty = 0
+			item.promotion_max_qty = 0
+			item.promotion_rate = 0
+			if (item._promotionSetFreeItem) {
+				item.is_free_item = item._promotionOriginalIsFreeItem || 0
+				delete item._promotionSetFreeItem
+				delete item._promotionOriginalIsFreeItem
+			}
+			if (item._promotionOriginal) {
+				item.rate = item._promotionOriginal.rate
+				item.discount_amount = item._promotionOriginal.discount_amount
+				item.discount_percentage = item._promotionOriginal.discount_percentage
+				delete item._promotionOriginal
+			}
 		})
 
-		// Early return if no free items
 		if (!Array.isArray(freeItems) || freeItems.length === 0) {
+			invoiceItems.value.forEach((item) => recalculateItem(item))
+			rebuildIncrementalCache()
 			return
 		}
 
-		// Match free items to cart items and set free_qty
+		const singleItemSelections = new Map(
+			appliedOffers.value
+				.filter((entry) => entry.offer?.custom_applicable_in_single_item)
+				.map((entry) => [
+					entry.offer.name || entry.offer.promotional_scheme || entry.code,
+					entry.offer.selected_product_item || null,
+				]),
+		)
+		const consumedSingleItemSchemes = new Set()
+
 		for (const freeItem of freeItems) {
-			const freeQty = Number.parseFloat(freeItem.qty) || 0
-			if (freeQty <= 0) continue
+			const promotionalQty = Number.parseFloat(freeItem.qty) || 0
+			if (promotionalQty <= 0) continue
 
-			// Find matching cart item by item_code and uom
 			const cartItem = invoiceItems.value.find(
-				item => item.item_code === freeItem.item_code &&
-				(item.uom || item.stock_uom) === (freeItem.uom || freeItem.stock_uom)
+				(item) => item.item_code === freeItem.item_code &&
+					(item.uom || item.stock_uom) === (freeItem.uom || freeItem.stock_uom),
 			)
+			if (!cartItem) continue
 
-			if (cartItem) {
-				cartItem.free_qty = freeQty
+			const schemeName = freeItem.applied_promotional_scheme
+			const isSingleItemScheme = schemeName && singleItemSelections.has(schemeName)
+			const selectedProductItem = isSingleItemScheme ? singleItemSelections.get(schemeName) : null
+			if (selectedProductItem && freeItem.item_code !== selectedProductItem) continue
+			if (isSingleItemScheme && consumedSingleItemSchemes.has(schemeName)) continue
+			if (isSingleItemScheme) consumedSingleItemSchemes.add(schemeName)
+
+			cartItem._promotionOriginalIsFreeItem = cartItem.is_free_item || 0
+			cartItem.is_free_item = 1
+			cartItem._promotionSetFreeItem = true
+
+			const promotionalRate = Number.parseFloat(freeItem.rate ?? freeItem.free_item_rate)
+			if (Number.isFinite(promotionalRate) && promotionalRate > 0) {
+				const originalRate = Number.parseFloat(cartItem.price_list_rate || cartItem.rate) || 0
+				const effectivePromotionalQty = isSingleItemScheme ? Math.min(promotionalQty, 1) : promotionalQty
+				const currentQty = Number.parseFloat(cartItem.quantity) || 0
+				const discountedQty = Math.min(effectivePromotionalQty, currentQty)
+
+				if (discountedQty > 0 && discountedQty < currentQty) {
+					const regularItem = {
+						...cartItem,
+						quantity: currentQty - discountedQty,
+						discount_amount: 0,
+						discount_percentage: 0,
+						is_free_item: 0,
+						promotion_qty: 0,
+						promotion_max_qty: 0,
+						promotion_rate: 0,
+						_rowId: Date.now() + "-" + Math.random().toString(36).slice(2),
+					}
+					delete regularItem._promotionOriginal
+					delete regularItem._promotionOriginalIsFreeItem
+					delete regularItem._promotionSetFreeItem
+
+					if (cartItem.serial_no && Number.isInteger(discountedQty)) {
+						const serials = cartItem.serial_no.split("\n").filter((serial) => serial.trim())
+						cartItem.serial_no = serials.slice(0, discountedQty).join("\n")
+						regularItem.serial_no = serials.slice(discountedQty).join("\n")
+					}
+
+					cartItem.quantity = discountedQty
+					const cartIndex = invoiceItems.value.indexOf(cartItem)
+					invoiceItems.value.splice(cartIndex + 1, 0, regularItem)
+				}
+
+				cartItem._promotionOriginal = {
+					rate: cartItem.rate,
+					discount_amount: cartItem.discount_amount || 0,
+					discount_percentage: cartItem.discount_percentage || 0,
+				}
+				cartItem.promotion_qty = discountedQty
+				cartItem.promotion_max_qty = effectivePromotionalQty
+				cartItem.promotion_rate = promotionalRate
+				cartItem.rate = originalRate
+				cartItem.discount_amount = Math.max(0, (originalRate - promotionalRate) * discountedQty)
+				const lineBaseAmount = originalRate * (Number.parseFloat(cartItem.quantity) || 0)
+				cartItem.discount_percentage = lineBaseAmount > 0
+					? (cartItem.discount_amount / lineBaseAmount) * 100
+					: 0
+			} else {
+				cartItem.free_qty = promotionalQty
 			}
 		}
+
+		invoiceItems.value.forEach((item) => recalculateItem(item))
+		rebuildIncrementalCache()
 	}
 
 	/**
@@ -297,8 +424,20 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		}
 	}
 
+	function getOfferRuleNames(offer) {
+		return Array.isArray(offer?.rule_names) && offer.rule_names.length
+			? offer.rule_names
+			: [offer?.name].filter(Boolean)
+	}
+
 	function getAppliedOfferCodes() {
 		return appliedOffers.value.map((entry) => entry.code)
+	}
+
+	function getAppliedRuleNames(entries = appliedOffers.value) {
+		return [...new Set(entries.flatMap((entry) =>
+			Array.isArray(entry.rules) && entry.rules.length ? entry.rules : [entry.code],
+		))]
 	}
 
 	function filterActiveOffers(appliedRuleNames = []) {
@@ -307,9 +446,10 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			return
 		}
 
-		appliedOffers.value = appliedOffers.value.filter((entry) =>
-			appliedRuleNames.includes(entry.code),
-		)
+		appliedOffers.value = appliedOffers.value.filter((entry) => {
+			const rules = Array.isArray(entry.rules) && entry.rules.length ? entry.rules : [entry.code]
+			return rules.some((ruleName) => appliedRuleNames.includes(ruleName))
+		})
 	}
 
 	async function applyOffer(offer, currentProfile, offersDialogRef = null) {
@@ -320,7 +460,9 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		}
 
 		const offerCode = offer.name
+		const offerRuleNames = getOfferRuleNames(offer)
 		const existingCodes = getAppliedOfferCodes()
+		const existingRuleNames = getAppliedRuleNames()
 		const alreadyApplied = existingCodes.includes(offerCode)
 
 		if (alreadyApplied) {
@@ -333,9 +475,18 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			return false
 		}
 
+		if (!offer.custom_applicable_in_single_item && (offer.required_product_items || []).length) {
+			const eligibility = offersStore.checkOfferEligibility(offer)
+			if (!eligibility.eligible) {
+				showWarning(eligibility.reason)
+				offersDialogRef?.resetApplyingState()
+				return false
+			}
+		}
+
 		try {
 			const invoiceData = buildInvoiceDataForOffers(currentProfile)
-			const offerNames = [...new Set([...existingCodes, offerCode])]
+			const offerNames = [...new Set([...existingRuleNames, ...offerRuleNames])]
 
 			const response = await applyOffersResource.submit({
 				invoice_data: invoiceData,
@@ -343,7 +494,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			})
 
 			const { items: responseItems, freeItems, appliedRules } =
-				parseOfferResponse(response, existingCodes)
+				parseOfferResponse(response, offerNames)
 
 			suppressOfferReapply.value = true
 			applyServerDiscounts(responseItems)
@@ -351,21 +502,21 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 			filterActiveOffers(appliedRules)
 
-			const offerApplied = appliedRules.includes(offerCode)
+			const offerApplied = offerRuleNames.every((ruleName) => appliedRules.includes(ruleName))
 
 			if (!offerApplied) {
 				// No new offer applied - restore previous state without new offer
-				if (existingCodes.length) {
+				if (existingRuleNames.length) {
 					try {
 						const rollbackResponse = await applyOffersResource.submit({
 							invoice_data: invoiceData,
-							selected_offers: existingCodes,
+							selected_offers: existingRuleNames,
 						})
 						const {
 							items: rollbackItems,
 							freeItems: rollbackFreeItems,
 							appliedRules: rollbackRules,
-						} = parseOfferResponse(rollbackResponse, existingCodes)
+						} = parseOfferResponse(rollbackResponse, existingRuleNames)
 
 						applyServerDiscounts(rollbackItems)
 						processFreeItems(rollbackFreeItems)
@@ -380,9 +531,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 				return false
 			}
 
-			const offerRuleCodes = appliedRules.includes(offerCode)
-				? appliedRules.filter((ruleName) => ruleName === offerCode)
-				: [offerCode]
+			const offerRuleCodes = appliedRules.filter((ruleName) => offerRuleNames.includes(ruleName))
 
 			const updatedEntries = appliedOffers.value.filter(
 				(entry) => entry.code !== offerCode,
@@ -401,6 +550,10 @@ export const usePOSCartStore = defineStore("posCart", () => {
 				max_amt: offer.max_amt,
 			})
 			appliedOffers.value = updatedEntries
+
+			// Reprocess after storing the cashier selection so the first application
+			// is locked to that product as well as all later recalculations.
+			processFreeItems(freeItems)
 
 			showSuccess(__('{0} applied successfully', [(offer.title || offer.name)]))
 
@@ -436,6 +589,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			(entry) => entry.code !== offerCode,
 		)
 		const remainingCodes = remainingOffers.map((entry) => entry.code)
+		const remainingRuleNames = getAppliedRuleNames(remainingOffers)
 
 		if (remainingCodes.length === 0) {
 			suppressOfferReapply.value = true
@@ -452,11 +606,11 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 			const response = await applyOffersResource.submit({
 				invoice_data: invoiceData,
-				selected_offers: remainingCodes,
+				selected_offers: remainingRuleNames,
 			})
 
 			const { items: responseItems, freeItems, appliedRules } =
-				parseOfferResponse(response, remainingCodes)
+				parseOfferResponse(response, remainingRuleNames)
 
 			suppressOfferReapply.value = true
 			applyServerDiscounts(responseItems)
@@ -525,9 +679,10 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 			// If any offers are invalid, remove them and reapply remaining
 			if (invalidOffers.length > 0) {
-				const validOfferCodes = appliedOffers.value
+				const validOffers = appliedOffers.value
 					.filter(o => !invalidOffers.find(inv => inv.code === o.code))
-					.map(o => o.code)
+				const validOfferCodes = validOffers.map(o => o.code)
+				const validRuleNames = getAppliedRuleNames(validOffers)
 
 				// Show warning about removed offers
 				const offerNames = invalidOffers.map(o => o.name).join(', ')
@@ -554,11 +709,11 @@ export const usePOSCartStore = defineStore("posCart", () => {
 					const invoiceData = buildInvoiceDataForOffers(currentProfile)
 					const response = await applyOffersResource.submit({
 						invoice_data: invoiceData,
-						selected_offers: validOfferCodes,
+						selected_offers: validRuleNames,
 					})
 
 					const { items: responseItems, freeItems, appliedRules } =
-						parseOfferResponse(response, validOfferCodes)
+						parseOfferResponse(response, validRuleNames)
 
 					suppressOfferReapply.value = true
 					applyServerDiscounts(responseItems)
@@ -567,9 +722,23 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 					// Update appliedOffers to only include valid ones
 					appliedOffers.value = appliedOffers.value.filter(entry =>
-						appliedRules.includes(entry.code)
+						((entry.rules || [entry.code]).some((ruleName) => appliedRules.includes(ruleName)))
 					)
 				}
+			} else {
+				// Eligible quantities may have changed, so refresh the earned freebie cap.
+				const activeRuleNames = getAppliedRuleNames()
+				const invoiceData = buildInvoiceDataForOffers(currentProfile)
+				const response = await applyOffersResource.submit({
+					invoice_data: invoiceData,
+					selected_offers: activeRuleNames,
+				})
+				const { items: responseItems, freeItems, appliedRules } =
+					parseOfferResponse(response, activeRuleNames)
+				suppressOfferReapply.value = true
+				applyServerDiscounts(responseItems)
+				processFreeItems(freeItems)
+				filterActiveOffers(appliedRules)
 			}
 		} catch (error) {
 			console.error("Error validating offers:", error)
@@ -676,6 +845,20 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			// Update all provided details
 			if (updatedDetails.quantity !== undefined) {
 				cartItem.quantity = updatedDetails.quantity
+				// A product-discount promotion can cover only part of a cart row.
+				// Do not carry its derived percentage onto newly added quantities.
+				if (cartItem.promotion_qty > 0 && cartItem.promotion_rate > 0) {
+					const listRate = Number.parseFloat(cartItem.price_list_rate || cartItem.rate) || 0
+					const entitledQty = Math.min(
+						Number.parseFloat(cartItem.promotion_qty) || 0,
+						Number.parseFloat(cartItem.quantity) || 0,
+					)
+					cartItem.discount_percentage = 0
+					cartItem.discount_amount = Math.max(
+						0,
+						(listRate - Number.parseFloat(cartItem.promotion_rate)) * entitledQty,
+					)
+				}
 			}
 			// Don't update rate directly - let recalculateItem compute it from price_list_rate and discount
 			// if (updatedDetails.rate !== undefined) {

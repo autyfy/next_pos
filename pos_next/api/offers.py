@@ -10,7 +10,7 @@ Promotional Schemes and standalone Pricing Rules.
 """
 
 from typing import Dict, List, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import frappe
 from frappe import _
 from frappe.utils import flt, getdate, nowdate
@@ -81,6 +81,9 @@ class Offer:
 	eligible_item_groups: List[str]
 	eligible_brands: List[str]
 	eligible_item_categories: List[str]
+	rule_names: List[str] = field(default_factory=list)
+	required_product_items: List[str] = field(default_factory=list)
+	custom_applicable_in_single_item: int = 0
 
 	def to_dict(self) -> Dict:
 		"""Convert to dictionary for API response"""
@@ -254,6 +257,7 @@ class OfferBuilder:
 
 		# Determine offer type
 		is_price_discount = rule.get("price_or_product_discount") == DiscountType.PRICE
+		discount_method = slab.get("rate_or_discount") if is_price_discount else None
 
 		return Offer(
 			name=rule["name"],
@@ -268,9 +272,9 @@ class OfferBuilder:
 			min_amt=flt(slab.get("min_amount", 0)),
 			max_amt=flt(slab.get("max_amount", 0)),
 			discount_type=slab.get("rate_or_discount") if is_price_discount else None,
-			rate=flt(slab.get("rate", 0)) if is_price_discount else 0,
-			discount_amount=flt(slab.get("discount_amount", 0)) if is_price_discount else 0,
-			discount_percentage=flt(slab.get("discount_percentage", 0)) if is_price_discount else 0,
+			rate=flt(slab.get("rate", 0)) if discount_method == "Rate" else 0,
+			discount_amount=flt(slab.get("discount_amount", 0)) if discount_method == "Discount Amount" else 0,
+			discount_percentage=flt(slab.get("discount_percentage", 0)) if discount_method == "Discount Percentage" else 0,
 			valid_from=rule.get("valid_from"),
 			valid_upto=rule.get("valid_upto"),
 			source=OfferSource.PROMOTIONAL_SCHEME,
@@ -305,6 +309,8 @@ class OfferBuilder:
 		elif rule["apply_on"] == ApplyOn.BRAND:
 			eligible_brands = eligibility.brands
 
+		discount_method = rule.get("rate_or_discount")
+
 		return Offer(
 			name=rule["name"],
 			title=rule.get("title") or rule["name"],
@@ -318,9 +324,9 @@ class OfferBuilder:
 			min_amt=flt(rule.get("min_amt", 0)),
 			max_amt=flt(rule.get("max_amt", 0)),
 			discount_type=rule.get("rate_or_discount"),
-			rate=flt(rule.get("rate", 0)),
-			discount_amount=flt(rule.get("discount_amount", 0)),
-			discount_percentage=flt(rule.get("discount_percentage", 0)),
+			rate=flt(rule.get("rate", 0)) if discount_method == "Rate" else 0,
+			discount_amount=flt(rule.get("discount_amount", 0)) if discount_method == "Discount Amount" else 0,
+			discount_percentage=flt(rule.get("discount_percentage", 0)) if discount_method == "Discount Percentage" else 0,
 			valid_from=rule.get("valid_from"),
 			valid_upto=rule.get("valid_upto"),
 			source=OfferSource.PRICING_RULE,
@@ -443,7 +449,7 @@ def _get_promotional_scheme_offers(company: str, date: str) -> List[Offer]:
 		SELECT
 			name, title, apply_on, selling, promotional_scheme,
 			promotional_scheme_id, coupon_code_based,
-			price_or_product_discount, priority, valid_from, valid_upto
+			price_or_product_discount, free_item, priority, valid_from, valid_upto
 		FROM `tabPricing Rule`
 		WHERE
 			disable = 0
@@ -458,6 +464,19 @@ def _get_promotional_scheme_offers(company: str, date: str) -> List[Offer]:
 	if not pricing_rules:
 		return []
 
+	# Ignore generated rules left behind after a Promotional Scheme slab was deleted.
+	active_slab_ids = {
+		row.name
+		for doctype in ("Promotional Scheme Price Discount", "Promotional Scheme Product Discount")
+		for row in frappe.get_all(doctype, filters={"disable": 0}, fields=["name"])
+	}
+	pricing_rules = [
+		rule for rule in pricing_rules
+		if rule.get("promotional_scheme_id") in active_slab_ids
+	]
+	if not pricing_rules:
+		return []
+
 	# Get unique scheme names
 	scheme_names = list({rule["promotional_scheme"] for rule in pricing_rules})
 
@@ -465,23 +484,43 @@ def _get_promotional_scheme_offers(company: str, date: str) -> List[Offer]:
 	price_slabs = SlabFetcher.fetch_price_slabs(scheme_names)
 	product_slabs = SlabFetcher.fetch_product_slabs(scheme_names)
 	eligibility_map = EligibilityFetcher.fetch_all(scheme_names)
+	single_item_map = {
+		row.name: int(row.custom_applicable_in_single_item or 0)
+		for row in frappe.get_all(
+			"Promotional Scheme",
+			filters={"name": ["in", scheme_names]},
+			fields=["name", "custom_applicable_in_single_item"],
+		)
+	}
 
-	# Build offers
+	# A Promotional Scheme is one selectable unit even though ERPNext creates
+	# separate generated rules for its price and product discount slabs.
 	offers = []
-	for rule in pricing_rules:
-		scheme_name = rule["promotional_scheme"]
+	for scheme_name in scheme_names:
+		scheme_rules = [rule for rule in pricing_rules if rule["promotional_scheme"] == scheme_name]
+		built_rules = []
+		for rule in scheme_rules:
+			slab = (price_slabs if rule.get("price_or_product_discount") == DiscountType.PRICE else product_slabs).get(scheme_name)
+			if not slab:
+				continue
+			eligibility = eligibility_map.get(scheme_name, OfferEligibility([], [], [], []))
+			built_rules.append(OfferBuilder.build_from_scheme_rule(rule, slab, eligibility))
 
-		# Get appropriate slab
-		if rule.get("price_or_product_discount") == DiscountType.PRICE:
-			slab = price_slabs.get(scheme_name)
-		else:
-			slab = product_slabs.get(scheme_name)
-
-		if not slab:
+		if not built_rules:
 			continue
-
-		eligibility = eligibility_map.get(scheme_name, OfferEligibility([], [], []))
-		offer = OfferBuilder.build_from_scheme_rule(rule, slab, eligibility)
+		# Prefer the price rule for the summary discount shown in the dialog.
+		offer = next((item for item in built_rules if item.discount_amount or item.discount_percentage or item.rate), built_rules[0])
+		offer.name = scheme_name
+		offer.title = scheme_name
+		offer.description = f"Promotional Scheme: {scheme_name}"
+		offer.offer = "Promotion" if len(built_rules) > 1 else offer.offer
+		offer.rule_names = [rule["name"] for rule in scheme_rules]
+		offer.required_product_items = list({
+			rule["free_item"] for rule in scheme_rules
+			if rule.get("price_or_product_discount") == DiscountType.PRODUCT and rule.get("free_item")
+		})
+		offer.coupon_based = 0
+		offer.custom_applicable_in_single_item = single_item_map.get(scheme_name, 0)
 		offers.append(offer)
 
 	return offers
@@ -522,7 +561,7 @@ def _get_standalone_pricing_rule_offers(company: str, date: str) -> List[Offer]:
 	# Build offers
 	offers = []
 	for rule in pricing_rules:
-		eligibility = eligibility_map.get(rule["name"], OfferEligibility([], [], []))
+		eligibility = eligibility_map.get(rule["name"], OfferEligibility([], [], [], []))
 		offer = OfferBuilder.build_from_standalone_rule(rule, eligibility)
 		offers.append(offer)
 

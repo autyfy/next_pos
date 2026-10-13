@@ -486,7 +486,19 @@ def update_invoice(data):
         remarks_from_frontend = data.get("remarks") or invoice_doc.get("remarks")
 
         # Populate missing fields (company, currency, accounts, etc.)
-        invoice_doc.set_missing_values()
+        original_set_pos_fields = invoice_doc.set_pos_fields
+
+        def set_pos_fields_preserving_manual_pricing(for_validate=False):
+            pos = original_set_pos_fields(for_validate)
+            invoice_doc.ignore_pricing_rule = 1
+            invoice_doc.flags.ignore_pricing_rule = True
+            return pos
+
+        invoice_doc.set_pos_fields = set_pos_fields_preserving_manual_pricing
+        try:
+            invoice_doc.set_missing_values()
+        finally:
+            invoice_doc.set_pos_fields = original_set_pos_fields
 
         # If set_pos_fields() cleared taxes_and_charges but we had one from frontend, restore it
         if not invoice_doc.taxes_and_charges and taxes_and_charges_from_frontend:
@@ -891,7 +903,19 @@ def submit_invoice(data, invoice=None):
             if flt(p.amount)
         ]
 
-        invoice_doc.set_missing_values()
+        original_set_pos_fields = invoice_doc.set_pos_fields
+
+        def set_pos_fields_preserving_manual_pricing(for_validate=False):
+            pos = original_set_pos_fields(for_validate)
+            invoice_doc.ignore_pricing_rule = 1
+            invoice_doc.flags.ignore_pricing_rule = True
+            return pos
+
+        invoice_doc.set_pos_fields = set_pos_fields_preserving_manual_pricing
+        try:
+            invoice_doc.set_missing_values()
+        finally:
+            invoice_doc.set_pos_fields = original_set_pos_fields
 
         # Restore original payments if set_missing_values wiped them
         if original_payments:
@@ -1749,6 +1773,28 @@ def apply_offers(invoice_data, selected_offers=None):
         else:
             pricing_rule_names = selected_offer_names
 
+        if pricing_rule_names:
+            selected_rule_records = frappe.get_all(
+                "Pricing Rule",
+                filters={"name": ["in", list(pricing_rule_names)]},
+                fields=["name", "promotional_scheme", "promotional_scheme_id"],
+            )
+            active_slab_ids = {
+                row.name
+                for doctype in (
+                    "Promotional Scheme Price Discount",
+                    "Promotional Scheme Product Discount",
+                )
+                for row in frappe.get_all(doctype, filters={"disable": 0}, fields=["name"])
+            }
+            pricing_rule_names = {
+                row.name
+                for row in selected_rule_records
+                if not row.promotional_scheme
+                or row.promotional_scheme_id in active_slab_ids
+            }
+            selected_offer_names = pos_offer_names | pricing_rule_names
+
         prepared_items_for_pos_offers = [frappe._dict(row) for row in items]
         applied_pos_offer_rules = set()
 
@@ -1939,12 +1985,14 @@ def apply_offers(invoice_data, selected_offers=None):
                 "customer": customer,
                 "customer_group": customer_group,
                 "territory": territory,
+                "pricing_rule_names": sorted(pricing_rule_names),
                 "items": pricing_items,
             }
         )
 
         # Call ERPNext pricing engine - it handles all conflicts based on priority
-        pricing_results = erpnext_apply_pricing_rule(pricing_args) or []
+        pricing_doc = frappe.get_doc(dict(pricing_args))
+        pricing_results = erpnext_apply_pricing_rule(pricing_args, doc=pricing_doc) or []
 
         if not pricing_results:
             return {"items": items}
@@ -1981,7 +2029,9 @@ def apply_offers(invoice_data, selected_offers=None):
                 ],
             )
             for record in rule_records:
-                if record.promotional_scheme and not record.coupon_code_based:
+                # Both promotional-scheme rules and standalone Pricing Rules can be selected.
+                # Coupon-based rules belong to the separate coupon flow.
+                if not record.coupon_code_based:
                     rule_map[record.name] = record
 
         if selected_offer_names:

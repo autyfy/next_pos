@@ -1,7 +1,7 @@
 <template>
 	<Dialog
 		v-model="show"
-		:options="{ title: __('Available Offers'), size: 'lg' }"
+		:options="{ title: dialogTitle, size: 'lg' }"
 	>
 		<template #body-content>
 			<div class="flex flex-col gap-4">
@@ -24,9 +24,9 @@
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
 						</svg>
 					</div>
-					<h3 class="mt-4 text-sm font-medium text-gray-900">{{ __('No offers available') }}</h3>
+					<h3 class="mt-4 text-sm font-medium text-gray-900">{{ emptyTitle }}</h3>
 					<p class="mt-2 text-xs text-gray-500">
-						{{ __('Add items to your cart to see eligible offers') }}
+						{{ emptyMessage }}
 					</p>
 				</div>
 
@@ -61,10 +61,12 @@
 								isOfferApplied(offer) ? 'end-24' : 'end-2',
 								offer.source === 'Pricing Rule'
 									? 'bg-blue-600 text-white'
-									: 'bg-purple-600 text-white'
+									: offer.source === 'POS Offer'
+										? 'bg-green-600 text-white'
+										: 'bg-purple-600 text-white'
 							]"
 						>
-							{{ offer.source === 'Pricing Rule' ? __('PRICING RULE') : __('PROMO SCHEME') }}
+							{{ offer.source === 'Pricing Rule' ? __('PRICING RULE') : offer.source === 'POS Offer' ? __('POS OFFER') : __('PROMO SCHEME') }}
 						</div>
 
 						<!-- Offer Header -->
@@ -168,20 +170,45 @@
 							</p>
 						</div>
 
+						<div
+							v-if="pendingSelectionOffer === offer.name"
+							class="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3"
+						>
+							<p class="mb-2 text-xs font-bold text-purple-800">{{ __("Choose the item to discount") }}</p>
+							<div class="flex flex-col gap-2">
+								<button
+									v-for="item in getSingleItemCandidates(offer)"
+									:key="offer.name + String.fromCharCode(45) + item.item_code"
+									type="button"
+									v-on:click.stop="applyOfferToItem(offer, item.item_code)"
+									class="rounded-md border border-purple-300 bg-white px-3 py-2 text-start text-xs font-semibold text-gray-800 hover:bg-purple-100"
+								>
+									{{ item.item_name || item.item_code }} ({{ item.item_code }})
+								</button>
+							</div>
+						</div>
+
+						<p
+							v-if="!isOfferApplied(offer) && !getOfferEligibility(offer).eligible"
+							class="mt-3 text-xs font-semibold text-orange-600"
+						>
+							{{ getOfferEligibility(offer).reason }}
+						</p>
+
 						<!-- Apply Button -->
 						<button
 							type="button"
 							@click.prevent="handleApplyOffer(offer)"
-							:disabled="applyingOffer"
+							:disabled="applyingOffer || !canApplyOffer(offer)"
 							:class="[
 								'mt-3 w-full py-2 px-4 rounded-lg font-semibold text-sm transition-all',
 								isOfferApplied(offer)
 									? 'bg-red-600 hover:bg-red-700 text-white'
 									: 'bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg',
-								applyingOffer ? 'opacity-70 cursor-not-allowed' : ''
+								applyingOffer || !canApplyOffer(offer) ? 'opacity-70 cursor-not-allowed' : ''
 							]"
 						>
-							{{ isOfferApplied(offer) ? __('Remove Offer') : __('Apply Offer') }}
+							{{ isOfferApplied(offer) ? removeLabel : applyLabel }}
 						</button>
 					</div>
 				</div>
@@ -226,12 +253,14 @@ const props = defineProps({
 		type: Array,
 		default: () => [],
 	},
+	sourceFilter: { type: String, default: "" },
 })
 
 const emit = defineEmits(["update:modelValue", "apply-offer", "remove-offer"])
 
 const show = ref(props.modelValue)
 const applyingOffer = ref(false)
+const pendingSelectionOffer = ref(null)
 const appliedOfferCodes = computed(() => {
 	return new Set(
 		(props.appliedOffers || []).map((entry) => entry?.code).filter(Boolean),
@@ -239,7 +268,33 @@ const appliedOfferCodes = computed(() => {
 })
 
 // Use ALL eligible offers from store (includes both auto and manual offers)
-const eligibleOffers = computed(() => offersStore.allEligibleOffersSorted)
+const eligibleOffers = computed(() => {
+	if (!props.sourceFilter) return offersStore.allEligibleOffersSorted
+	if (props.sourceFilter === "Rules") {
+		return offersStore.availableOffers.filter((offer) => {
+			if (offer.source !== "Pricing Rule" && offer.source !== "Promotional Scheme") return false
+			if (offersStore.checkOfferEligibility(offer).eligible) return true
+			return !offer.custom_applicable_in_single_item &&
+				(offer.required_product_items || []).length > 0 &&
+				offersStore.checkOfferEligibility(offer, { ignoreRequiredProducts: true }).eligible
+		})
+	}
+	return offersStore.allEligibleOffersSorted.filter((offer) => offer.source === props.sourceFilter)
+})
+const isPricingRuleMode = computed(() => props.sourceFilter === "Rules")
+const dialogTitle = computed(() => isPricingRuleMode.value ? __("Applicable Pricing Rules") : __("Available Offers"))
+const emptyTitle = computed(() => isPricingRuleMode.value ? __("No pricing rules available") : __("No offers available"))
+const emptyMessage = computed(() => isPricingRuleMode.value ? __("Add matching items to your cart to see applicable pricing rules") : __("Add items to your cart to see eligible offers"))
+const applyLabel = computed(() => isPricingRuleMode.value ? __("Apply Pricing Rule") : __("Apply Offer"))
+const removeLabel = computed(() => isPricingRuleMode.value ? __("Remove Pricing Rule") : __("Remove Offer"))
+
+function getOfferEligibility(offer) {
+	return offersStore.checkOfferEligibility(offer)
+}
+
+function canApplyOffer(offer) {
+	return isOfferApplied(offer) || getOfferEligibility(offer).eligible
+}
 
 // Loading state - check if offers are being loaded
 const loading = computed(() => {
@@ -259,8 +314,20 @@ watch(show, (val) => {
 	// Reset applying state when dialog closes
 	if (!val) {
 		applyingOffer.value = false
+		pendingSelectionOffer.value = null
 	}
 })
+
+function getSingleItemCandidates(offer) {
+	if (!offer?.custom_applicable_in_single_item) return []
+	const productItems = new Set(offer.required_product_items || [])
+	return (props.items || []).filter((item) => productItems.has(item.item_code))
+}
+
+function applyOfferToItem(offer, itemCode) {
+	pendingSelectionOffer.value = null
+	handleApplyOffer({ ...offer, selected_product_item: itemCode })
+}
 
 async function handleApplyOffer(offer) {
 	if (applyingOffer.value) {
@@ -279,6 +346,22 @@ async function handleApplyOffer(offer) {
 			applyingOffer.value = false
 		}
 		return
+	}
+
+	if (!getOfferEligibility(offer).eligible) {
+		applyingOffer.value = false
+		return
+	}
+
+	if (offer.custom_applicable_in_single_item && !offer.selected_product_item) {
+		const candidates = getSingleItemCandidates(offer)
+		if (candidates.length > 1) {
+			pendingSelectionOffer.value = offer.name
+			return
+		}
+		if (candidates.length === 1) {
+			offer = { ...offer, selected_product_item: candidates[0].item_code }
+		}
 	}
 
 	applyingOffer.value = true

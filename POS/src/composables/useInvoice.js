@@ -180,7 +180,7 @@ export function useInvoice() {
 		const isInsuranceSerialItem = item.custom_insurance_sr_no || item.requires_insurance_sr_no
 		const isPreorderItem = item.custom_pre_order_id || item.custom_preorder_code
 
-		const existingItem = (isInsuranceSerialItem || isPreorderItem) ? null : invoiceItems.value.find(
+		const existingItem = (isInsuranceSerialItem || isPreorderItem || item.force_new_cart_line) ? null : invoiceItems.value.find(
 			(i) => i.item_code === item.item_code && i.uom === itemUom,
 		)
 
@@ -278,9 +278,11 @@ export function useInvoice() {
 	 *                            If provided, only removes the item with matching item_code AND uom.
 	 *                            If null, removes the first item matching item_code.
 	 */
-	function removeItem(itemCode, uom = null) {
+	function removeItem(itemCode, uom = null, rowId = null) {
 		let itemToRemove
-		if (uom) {
+		if (rowId) {
+			itemToRemove = invoiceItems.value.find((i) => i._rowId === rowId)
+		} else if (uom) {
 			itemToRemove = invoiceItems.value.find(
 				(i) => i.item_code === itemCode && i.uom === uom,
 			)
@@ -302,7 +304,9 @@ export function useInvoice() {
 			}
 		}
 
-		if (uom) {
+		if (rowId) {
+			invoiceItems.value = invoiceItems.value.filter((i) => i._rowId !== rowId)
+		} else if (uom) {
 			invoiceItems.value = invoiceItems.value.filter(
 				(i) => !(i.item_code === itemCode && i.uom === uom),
 			)
@@ -321,9 +325,11 @@ export function useInvoice() {
 	 *                            If provided, only updates the item with matching item_code AND uom.
 	 *                            If null, updates the first item matching item_code.
 	 */
-	function updateItemQuantity(itemCode, quantity, uom = null) {
+	function updateItemQuantity(itemCode, quantity, uom = null, rowId = null) {
 		let item
-		if (uom) {
+		if (rowId) {
+			item = invoiceItems.value.find((i) => i._rowId === rowId)
+		} else if (uom) {
 			item = invoiceItems.value.find(
 				(i) => i.item_code === itemCode && i.uom === uom,
 			)
@@ -708,6 +714,7 @@ export function useInvoice() {
 				item_code: item.item_code,
 				item_name: item.item_name,
 				qty: item.quantity,
+				is_free_item: item.is_free_item ? 1 : 0,
 				// IMPORTANT: Rate calculation depends on tax mode and discounts
 				// Tax-inclusive mode: Send gross amount (price after discount, before tax extraction)
 				//   - With discount: price_list_rate - discount_amount
@@ -775,6 +782,7 @@ export function useInvoice() {
 				item_code: item.item_code,
 				item_name: item.item_name,
 				qty: item.quantity,
+				is_free_item: item.is_free_item ? 1 : 0,
 				// Tax-inclusive: send gross amount (ERPNext extracts net via included_in_print_rate)
 				// Tax-exclusive: send net amount (after discount, before tax)
 				rate: taxInclusive.value

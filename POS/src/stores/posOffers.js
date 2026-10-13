@@ -71,7 +71,7 @@ export const usePOSOffersStore = defineStore("posOffers", () => {
 	 * @param {Object} offer - The offer to check
 	 * @returns {Object} {eligible: boolean, reason: string|null}
 	 */
-	function checkOfferEligibility(offer) {
+	function checkOfferEligibility(offer, options = {}) {
 		const subtotal = cartSnapshot.value.subtotal || 0
 		const itemCount = cartSnapshot.value.itemCount || 0
 		const cartItemCodes = cartSnapshot.value.itemCodes || []
@@ -84,6 +84,27 @@ export const usePOSOffersStore = defineStore("posOffers", () => {
 			return {
 				eligible: false,
 				reason: "Cart is empty",
+			}
+		}
+
+		// A Promotional Scheme with product-discount slabs becomes selectable only
+		// when the cart contains both its trigger item and a configured product.
+		const requiredProductItems = offer?.required_product_items || []
+		if (requiredProductItems.length > 0 && !options.ignoreRequiredProducts) {
+			const requiresAllProducts = !offer?.custom_applicable_in_single_item
+			const missingProducts = requiredProductItems.filter(
+				(item) => !cartItemCodes.includes(item),
+			)
+			const hasRequiredProducts = requiresAllProducts
+				? missingProducts.length === 0
+				: missingProducts.length < requiredProductItems.length
+			if (!hasRequiredProducts) {
+				return {
+					eligible: false,
+					reason: requiresAllProducts
+						? __("Add all bundle items: {0}", [missingProducts.join(", ")])
+						: __("Add one of the promotional products to apply this scheme"),
+				}
 			}
 		}
 

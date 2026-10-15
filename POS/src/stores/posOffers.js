@@ -102,7 +102,9 @@ export const usePOSOffersStore = defineStore("posOffers", () => {
 				return {
 					eligible: false,
 					reason: requiresAllProducts
-						? __("Add all bundle items: {0}", [missingProducts.join(", ")])
+						? __("Add all bundle items: {0}", [missingProducts.map(
+							(code) => offer.required_product_item_names?.[code] || code,
+						).join(", ")])
 						: __("Add one of the promotional products to apply this scheme"),
 				}
 			}

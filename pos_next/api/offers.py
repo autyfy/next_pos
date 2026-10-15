@@ -83,6 +83,7 @@ class Offer:
 	eligible_item_categories: List[str]
 	rule_names: List[str] = field(default_factory=list)
 	required_product_items: List[str] = field(default_factory=list)
+	required_product_item_names: Dict[str, str] = field(default_factory=dict)
 	custom_applicable_in_single_item: int = 0
 
 	def to_dict(self) -> Dict:
@@ -495,6 +496,13 @@ def _get_promotional_scheme_offers(company: str, date: str) -> List[Offer]:
 
 	# A Promotional Scheme is one selectable unit even though ERPNext creates
 	# separate generated rules for its price and product discount slabs.
+	product_codes = list({rule.get("free_item") for rule in pricing_rules if rule.get("free_item")})
+	product_names = {
+		row.name: row.item_name
+		for row in frappe.get_all(
+			"Item", filters={"name": ["in", product_codes]}, fields=["name", "item_name"]
+		)
+	} if product_codes else {}
 	offers = []
 	for scheme_name in scheme_names:
 		scheme_rules = [rule for rule in pricing_rules if rule["promotional_scheme"] == scheme_name]
@@ -520,6 +528,9 @@ def _get_promotional_scheme_offers(company: str, date: str) -> List[Offer]:
 			if rule.get("price_or_product_discount") == DiscountType.PRODUCT and rule.get("free_item")
 		})
 		offer.coupon_based = 0
+		offer.required_product_item_names = {
+			code: product_names.get(code) or code for code in offer.required_product_items
+		}
 		offer.custom_applicable_in_single_item = single_item_map.get(scheme_name, 0)
 		offers.append(offer)
 

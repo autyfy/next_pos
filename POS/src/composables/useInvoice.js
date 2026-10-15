@@ -735,6 +735,10 @@ export function useInvoice() {
 				posa_offers: item.posa_offers || null,
 				custom_pos_offer_type: item.custom_pos_offer_type || null,
 				posa_offer_applied: item.posa_offer_applied ? 1 : 0,
+				custom_apply_pricing_rule: (
+					item.posa_offer_applied || item.pricing_rules?.length > 0 ||
+					item.promotion_qty > 0 || item.free_qty > 0
+				) ? 1 : 0,
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
 				custom_insurance_supplier: item.custom_insurance_supplier || null,
 				custom_insurance_supplier_address: item.custom_insurance_supplier_address || null,
@@ -799,6 +803,10 @@ export function useInvoice() {
 				posa_offers: item.posa_offers || null,
 				custom_pos_offer_type: item.custom_pos_offer_type || null,
 				posa_offer_applied: item.posa_offer_applied ? 1 : 0,
+				custom_apply_pricing_rule: (
+					item.posa_offer_applied || item.pricing_rules?.length > 0 ||
+					item.promotion_qty > 0 || item.free_qty > 0
+				) ? 1 : 0,
 				custom_insurance_sr_no: item.custom_insurance_sr_no || null,
 				custom_insurance_supplier: item.custom_insurance_supplier || null,
 				custom_insurance_supplier_address: item.custom_insurance_supplier_address || null,
